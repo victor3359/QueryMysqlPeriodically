@@ -1,9 +1,6 @@
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
-using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Threading.Tasks;
 
 namespace QueryMysqlEveryFiveMinute
 {
@@ -19,6 +16,9 @@ namespace QueryMysqlEveryFiveMinute
                 .UseWindowsService()
                 .ConfigureServices((hostContext, services) =>
                 {
+                    IConfiguration configuration = hostContext.Configuration;
+                    string DesktopPath = configuration.GetSection("DesktopPath").Get<string>();
+                    services.AddSingleton(DesktopPath);
                     services.AddHostedService<Worker>();
                 });
     }
