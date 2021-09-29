@@ -1,4 +1,4 @@
-using Microsoft.Extensions.Hosting;
+﻿using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using System;
 using System.IO;
@@ -30,45 +30,129 @@ namespace QueryMysqlEveryFiveMinute
             this.DesktopPath = DesktopPath;
             ExcelPackage.LicenseContext = LicenseContext.NonCommercial;
 
-            if (!Directory.Exists($"{DesktopPath}\\POWER_DATA"))
+            if (!Directory.Exists($"{DesktopPath}\\Report"))
             {
-                Directory.CreateDirectory($"{DesktopPath}\\POWER_DATA");
+                Directory.CreateDirectory($"{DesktopPath}\\Report");
             }
-            if (!Directory.Exists($"{DesktopPath}\\POWER_DATA\\Daily"))
+            if (!Directory.Exists($"{DesktopPath}\\Report\\Excel"))
             {
-                Directory.CreateDirectory($"{DesktopPath}\\POWER_DATA\\Daily");
+                Directory.CreateDirectory($"{DesktopPath}\\Report\\Excel");
             }
-            if (!Directory.Exists($"{DesktopPath}\\POWER_DATA\\Monthly"))
+            if (!Directory.Exists($"{DesktopPath}\\Report\\Excel\\Daily"))
             {
-                Directory.CreateDirectory($"{DesktopPath}\\POWER_DATA\\Monthly");
+                Directory.CreateDirectory($"{DesktopPath}\\Report\\Excel\\Daily");
+            }
+            if (!Directory.Exists($"{DesktopPath}\\Report\\Excel\\Monthly"))
+            {
+                Directory.CreateDirectory($"{DesktopPath}\\Report\\Excel\\Monthly");
             }
         }
 
-        private void AddDailySheets(MySqlConnection connection, ExcelPackage ep, string bayName, string sheetName, DateTime currentTime, int dbIndex)
+        private void AddDailySheets(MySqlConnection connection, ExcelPackage ep, string bayName, string sheetName, DateTime currentTime, int dbIndex, bool HV = false)
         {
             int index = 2;
             ep.Workbook.Worksheets.Add($"{bayName}_{sheetName}");
             ExcelWorksheet st = ep.Workbook.Worksheets[$"{bayName}_{sheetName}"];
-            st.Cells[1, 1].LoadFromText($"BAYNAME,VALUE,TIMESTAMP");
+            if (HV)
+            {
+                st.Cells[1, 1].LoadFromText($"BAYNAME,VALUE,TIMESTAMP,,MWh,KWh");
+            }
+            else
+            {
+                st.Cells[1, 1].LoadFromText($"BAYNAME,VALUE,TIMESTAMP,,kWh");
+            }
             st.Column(3).Style.Numberformat.Format = @"yyyy/MM/dd HH:mm:ss.000";
-            using (var command = new MySqlCommand($"select value, eventTime from analogevents where points_idPoint={dbIndex} and eventTime between '{currentTime.AddHours(-8).AddHours(-24).ToString("yyyy-MM-dd HH:mm:ss")}' and '{currentTime.AddHours(-8).ToString("yyyy-MM-dd HH:mm:ss")}'", connection))
-            using (var reader = command.ExecuteReader())
-                while (reader.Read())
-                    st.Cells[index++, 1].LoadFromText($"{bayName},{reader.GetDouble(0)},{reader.GetDateTime(1).AddHours(8).ToString("yyyy-MM-dd HH:mm:ss.fff")}");
-            st.Cells.AutoFitColumns();
+            DateTime Temp = currentTime.AddHours(-34);
+            double td = 0;
+            for (int i=0; i < 1440; i++)
+            {
+                using (var command = new MySqlCommand($"select value, eventTime from analogevents where points_idPoint={dbIndex} and eventTime between '{Temp.AddMinutes(i).ToString("yyyy-MM-dd HH:mm")}' and '{Temp.AddMinutes(i+1).ToString("yyyy-MM-dd HH:mm")}' order by eventTime desc limit 1", connection))
+                {
+                    command.CommandTimeout = 6000;
+                    using (var reader = command.ExecuteReader())
+                        while (reader.Read())
+                        {
+                            if (HV)
+                            {
+                                st.Cells[index++, 1].LoadFromText($"{bayName},{reader.GetDouble(0)},{reader.GetDateTime(1).AddHours(8).ToString("yyyy-MM-dd HH:mm:ss.fff")},{reader.GetDouble(0) - td},{(reader.GetDouble(0) - td) * 1000}");
+                            }
+                            else
+                            {
+                                st.Cells[index++, 1].LoadFromText($"{bayName},{reader.GetDouble(0)},{reader.GetDateTime(1).AddHours(8).ToString("yyyy-MM-dd HH:mm:ss.fff")},{reader.GetDouble(0) - td}");
+                            }
+
+                            td = reader.GetDouble(0);
+                        }
+                    st.Cells.AutoFitColumns();
+                }
+            }
+            if (HV)
+            {
+                st.Cells[1, 8].Value = "當日累積發電";
+                st.Cells[1, 9].Value = "MWh";
+                st.Cells[2, 9].Value = "kWh";
+                st.Cells[1, 10].Formula = $"SUM(E2:E{st.Dimension.End.Row})";
+                st.Cells[2, 10].Formula = "J1 * 1000";
+            }
+            else
+            {
+                st.Cells[1, 8].Value = "當日累積發電";
+                st.Cells[1, 9].Value = "kWh";
+                st.Cells[1, 10].Formula = $"SUM(E2:E{st.Dimension.End.Row})";
+            }
         }
-        private void AddMonthlySheets(MySqlConnection connection, ExcelPackage ep, string bayName, string sheetName, DateTime currentTime, int dbIndex)
+        private void AddMonthlySheets(MySqlConnection connection, ExcelPackage ep, string bayName, string sheetName, DateTime currentTime, int dbIndex, bool HV = false)
         {
             int index = 2;
             ep.Workbook.Worksheets.Add($"{bayName}_{sheetName}");
             ExcelWorksheet st = ep.Workbook.Worksheets[$"{bayName}_{sheetName}"];
-            st.Cells[1, 1].LoadFromText($"BAYNAME,VALUE,TIMESTAMP");
+            if (HV)
+            {
+                st.Cells[1, 1].LoadFromText($"BAYNAME,VALUE,TIMESTAMP,,MWh,KWh");
+            }
+            else
+            {
+                st.Cells[1, 1].LoadFromText($"BAYNAME,VALUE,TIMESTAMP,,MWh");
+            }
             st.Column(3).Style.Numberformat.Format = @"yyyy/MM/dd HH:mm:ss.000";
-            using (var command = new MySqlCommand($"select value, eventTime from analogevents where points_idPoint={dbIndex} and eventTime between '{currentTime.AddHours(-8).AddMonths(-1).ToString("yyyy-MM-dd HH:mm:ss")}' and '{currentTime.AddHours(-8).ToString("yyyy-MM-dd HH:mm:ss")}'", connection))
-            using (var reader = command.ExecuteReader())
-                while (reader.Read())
-                    st.Cells[index++, 1].LoadFromText($"{bayName},{reader.GetDouble(0)},{reader.GetDateTime(1).AddHours(8).ToString("yyyy-MM-dd HH:mm:ss.fff")}");
-            st.Cells.AutoFitColumns();
+            DateTime Temp = currentTime.AddHours(-8).AddMonths(-1);
+            double td = 0;
+            for (int i = 0; i < DateTime.DaysInMonth(Temp.Year, Temp.Month); i++)
+            {
+                using (var command = new MySqlCommand($"select value, eventTime from analogevents where points_idPoint={dbIndex} and eventTime between '{Temp.AddDays(i).ToString("yyyy-MM-dd")}' and '{Temp.AddDays(i+1).ToString("yyyy-MM-dd")}' order by eventTime desc limit 1", connection))
+                {
+                    command.CommandTimeout = 6000;
+                    using (var reader = command.ExecuteReader())
+                        while (reader.Read())
+                        {
+                            if (HV)
+                            {
+                                st.Cells[index++, 1].LoadFromText($"{bayName},{reader.GetDouble(0)},{reader.GetDateTime(1).AddHours(8).ToString("yyyy-MM-dd HH:mm:ss.fff")},{reader.GetDouble(0) - td},{(reader.GetDouble(0) - td) * 1000}");
+                            }
+                            else
+                            {
+                                st.Cells[index++, 1].LoadFromText($"{bayName},{reader.GetDouble(0)},{reader.GetDateTime(1).AddHours(8).ToString("yyyy-MM-dd HH:mm:ss.fff")},{reader.GetDouble(0) - td}");
+                            }
+                            
+                            td = reader.GetDouble(0);
+                        }
+                    st.Cells.AutoFitColumns();
+                }
+            }
+            if (HV)
+            {
+                st.Cells[1, 8].Value = "當日累積發電";
+                st.Cells[1, 9].Value = "MWh";
+                st.Cells[2, 9].Value = "kWh";
+                st.Cells[1, 10].Formula = $"SUM(E2:E{st.Dimension.End.Row})";
+                st.Cells[2, 10].Formula = "J1 * 1000";
+            }
+            else
+            {
+                st.Cells[1, 8].Value = "當日累積發電";
+                st.Cells[1, 9].Value = "kWh";
+                st.Cells[1, 10].Formula = $"SUM(E2:E{st.Dimension.End.Row})";
+            }
         }
 
         protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -95,12 +179,12 @@ namespace QueryMysqlEveryFiveMinute
                             {
                                 connection.Open();
 
-                                AddDailySheets(connection, ep, "LINE1510", "FWD", currentTime, 161);
-                                AddDailySheets(connection, ep, "LINE1510", "REV", currentTime, 159);
-                                AddDailySheets(connection, ep, "DTR1650", "FWD", currentTime, 165);
-                                AddDailySheets(connection, ep, "DTR1650", "REV", currentTime, 163);
-                                AddDailySheets(connection, ep, "DTR1660", "FWD", currentTime, 169);
-                                AddDailySheets(connection, ep, "DTR1660", "REV", currentTime, 167);
+                                AddDailySheets(connection, ep, "LINE1510", "FWD", currentTime, 161, true);
+                                AddDailySheets(connection, ep, "LINE1510", "REV", currentTime, 159, true);
+                                AddDailySheets(connection, ep, "DTR1650", "FWD", currentTime, 165, true);
+                                AddDailySheets(connection, ep, "DTR1650", "REV", currentTime, 163, true);
+                                AddDailySheets(connection, ep, "DTR1660", "FWD", currentTime, 169, true);
+                                AddDailySheets(connection, ep, "DTR1660", "REV", currentTime, 167, true);
                                 AddDailySheets(connection, ep, "MP1", "FWD", currentTime, 1058);
                                 AddDailySheets(connection, ep, "MP1", "REV", currentTime, 1056);
                                 AddDailySheets(connection, ep, "MP2", "FWD", currentTime, 1062);
@@ -150,14 +234,14 @@ namespace QueryMysqlEveryFiveMinute
                                 ExcelWorksheet EVENTLIST = ep.Workbook.Worksheets["EVENTLIST"];
                                 EVENTLIST.Cells[1, 1].LoadFromText($"EVENT,STATE,TIMESTAMP");
                                 EVENTLIST.Column(3).Style.Numberformat.Format = @"yyyy/MM/dd HH:mm:ss.000";
-                                using (var command = new MySqlCommand($"select T3, state, eventTime from digitalevents inner join points on digitalevents.points_idPoint = points.idPoint where eventTime between '{currentTime.AddHours(-8).AddHours(-24).ToString("yyyy-MM-dd HH:mm:ss")}' and '{currentTime.AddHours(-8).ToString("yyyy-MM-dd HH:mm:ss")}'", connection))
+                                using (var command = new MySqlCommand($"select T3, state, eventTime from digitalevents inner join points on digitalevents.points_idPoint = points.idPoint where eventTime between '{currentTime.AddHours(-8).AddHours(-26).ToString("yyyy-MM-dd HH:mm:ss")}' and '{currentTime.AddHours(-8).AddHours(-2).ToString("yyyy-MM-dd HH:mm:ss")}'", connection))
                                 using (var reader = command.ExecuteReader())
                                     while (reader.Read())
                                         if(reader.GetString(0) != "") EVENTLIST.Cells[index++, 1].LoadFromText($"{reader.GetString(0)},{reader.GetString(1)},{reader.GetDateTime(2).AddHours(8).ToString("yyyy-MM-dd HH:mm:ss.fff")}");
                                 EVENTLIST.Cells.AutoFitColumns();
 
                                 //Save ExcelFile
-                                FileInfo fi = new FileInfo($"{DesktopPath}\\POWER_DATA\\Daily\\CHENYA-{currentTime.ToString("yyyyMMdd")}_DailyReport.xlsx");
+                                FileInfo fi = new FileInfo($"{DesktopPath}\\Report\\Excel\\Daily\\CHENYA-{currentTime.AddDays(-1).ToString("yyyyMMdd")}_DailyReport.xlsx");
                                 ep.SaveAs(fi);
                             }
                         }
@@ -176,12 +260,12 @@ namespace QueryMysqlEveryFiveMinute
                         {
                             connection.Open();
 
-                            AddMonthlySheets(connection, ep, "LINE1510", "FWD", currentTime, 161);
-                            AddMonthlySheets(connection, ep, "LINE1510", "REV", currentTime, 159);
-                            AddMonthlySheets(connection, ep, "DTR1650", "FWD", currentTime, 165);
-                            AddMonthlySheets(connection, ep, "DTR1650", "REV", currentTime, 163);
-                            AddMonthlySheets(connection, ep, "DTR1660", "FWD", currentTime, 169);
-                            AddMonthlySheets(connection, ep, "DTR1660", "REV", currentTime, 167);
+                            AddMonthlySheets(connection, ep, "LINE1510", "FWD", currentTime, 161, true);
+                            AddMonthlySheets(connection, ep, "LINE1510", "REV", currentTime, 159, true);
+                            AddMonthlySheets(connection, ep, "DTR1650", "FWD", currentTime, 165, true);
+                            AddMonthlySheets(connection, ep, "DTR1650", "REV", currentTime, 163, true);
+                            AddMonthlySheets(connection, ep, "DTR1660", "FWD", currentTime, 169, true);
+                            AddMonthlySheets(connection, ep, "DTR1660", "REV", currentTime, 167, true);
                             AddMonthlySheets(connection, ep, "MP1", "FWD", currentTime, 1058);
                             AddMonthlySheets(connection, ep, "MP1", "REV", currentTime, 1056);
                             AddMonthlySheets(connection, ep, "MP2", "FWD", currentTime, 1062);
@@ -225,7 +309,7 @@ namespace QueryMysqlEveryFiveMinute
                             AddMonthlySheets(connection, ep, "FEEDER_28", "FWD", currentTime, 1054);
                             AddMonthlySheets(connection, ep, "FEEDER_28", "REV", currentTime, 1052);
 
-                            FileInfo fi = new FileInfo($"{DesktopPath}\\POWER_DATA\\Monthly\\CHENYA-{currentTime.ToString("yyyyMM")}_MonthlyReport.xlsx");
+                            FileInfo fi = new FileInfo($"{DesktopPath}\\Report\\Excel\\Monthly\\CHENYA-{currentTime.AddMonths(-1).ToString("yyyyMM")}_MonthlyReport.xlsx");
                             ep.SaveAs(fi);
                         }
                     }
