@@ -29,7 +29,6 @@ namespace QueryMysqlEveryFiveMinute
         private bool oldState_Archive;
         private bool raiseFlag_Archive = false;
 
-
         private bool DebugMode = false;
         private string DebugStr;
         public Worker(ILogger<Worker> logger, IOptions<ServiceOptions> options)
@@ -189,7 +188,7 @@ namespace QueryMysqlEveryFiveMinute
             string CreateTableQueryString = @"CREATE TABLE IF NOT EXISTS `actionlog` (
 	                    `IND` INT(11) NOT NULL AUTO_INCREMENT,
 	                    `ACTION` VARCHAR(50) NULL DEFAULT NULL COLLATE 'utf8_unicode_ci',
-	                    `DESCRIPTION` VARCHAR(50) NULL DEFAULT NULL COLLATE 'utf8_unicode_ci',
+	                    `DESCRIPTION` VARCHAR(100) NULL DEFAULT NULL COLLATE 'utf8_unicode_ci',
 	                    `DATETIME` DATETIME NULL DEFAULT NULL,
 	                    PRIMARY KEY (`IND`)
                     )
@@ -400,20 +399,30 @@ namespace QueryMysqlEveryFiveMinute
                         bool YesterdayHaveRawdata = true;
                         int AddDay = 0;
                         bool TodayHaveRawdata = false;
-                        int ScanIndex = 0;
+                        int ScanIndex_End = 0;
+                        int ScanIndex_Start = 0;
                         while (YesterdayHaveRawdata)
                         {
                             _logger.LogInformation($"DATE {QueryDate.AddDays(AddDay).ToString("yyyy-MM-dd")} scaning data.");
                             //insert log to DB
-                            InsertMsgToDbTable("DATABASE SCAN START", $"DATE: {QueryDate.AddDays(AddDay).ToString("yyyy-MM-dd")} scan start.");
-                            using (var command = new MySqlCommand($"select idEvent from analogevents where TO_DAYS(eventTime) = TO_DAYS(\"{QueryDate.AddDays(AddDay).ToString("yyyy-MM-dd")}\") order by eventTime desc limit 1", connection))
+                            InsertMsgToDbTable("DATABASE SCAN START", $"DATE: {QueryDate.AddDays(AddDay).ToString("yyyy-MM-dd")} scaning data.");
+                            using (var scan_end = new MySqlCommand($"select idEvent from analogevents where TO_DAYS(eventTime) = TO_DAYS(\"{QueryDate.AddDays(AddDay).ToString("yyyy-MM-dd")}\") order by eventTime desc limit 1", connection))
                             {
-                                command.CommandTimeout = 6000;
-                                using (var reader = command.ExecuteReader())
-                                    while (reader.Read())
+                                scan_end.CommandTimeout = 6000;
+                                using (var result_end = scan_end.ExecuteReader())
+                                    while (result_end.Read())
                                     {
                                         TodayHaveRawdata = true;
-                                        ScanIndex = reader.GetInt32(0);
+                                        ScanIndex_End = result_end.GetInt32(0);
+                                    }
+                            }
+                            using (var scan_start = new MySqlCommand($"select idEvent from analogevents where TO_DAYS(eventTime) = TO_DAYS(\"{QueryDate.AddDays(AddDay).ToString("yyyy-MM-dd")}\") order by eventTime asc limit 1", connection))
+                            {
+                                scan_start.CommandTimeout = 6000;
+                                using (var result_start = scan_start.ExecuteReader())
+                                    while (result_start.Read())
+                                    {
+                                        ScanIndex_Start = result_start.GetInt32(0);
                                     }
                             }
                             _logger.LogInformation($"DATE {QueryDate.AddDays(AddDay).ToString("yyyy-MM-dd")} scan completed.");
@@ -429,7 +438,7 @@ namespace QueryMysqlEveryFiveMinute
                                 break;
                             }
                             _logger.LogInformation("Exporting rawdata from MySQL and saving file...");
-                            InsertMsgToDbTable("EXPORT DATA START", $"DATE: {QueryDate.AddDays(AddDay).ToString("yyyy-MM-dd")} exporting data, from ID: {ScanIndex}.");
+                            InsertMsgToDbTable("EXPORT DATA START", $"DATE: {QueryDate.AddDays(AddDay).ToString("yyyy-MM-dd")} exporting data, from ID: {ScanIndex_Start} to {ScanIndex_End}.");
                             try
                             {
                                 //Save SQL file
