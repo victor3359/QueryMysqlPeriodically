@@ -1,5 +1,6 @@
 ﻿using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using System;
 using System.IO;
 using System.Linq;
@@ -10,12 +11,14 @@ using System.Threading.Tasks;
 
 using MySqlConnector;
 using OfficeOpenXml;
+using System.Diagnostics;
 
 namespace QueryMysqlEveryFiveMinute
 {
     public class Worker : BackgroundService
     {
         private readonly ILogger<Worker> _logger;
+        private readonly IOptions<ServiceOptions> _options;
 
         private bool oldState_Daily;
         private bool raiseFlag_Daily = false;
@@ -23,29 +26,40 @@ namespace QueryMysqlEveryFiveMinute
         private bool oldState_Monthly;
         private bool raiseFlag_Monthly = false;
 
-        private string DesktopPath;
-        public Worker(ILogger<Worker> logger, string DesktopPath)
+        private bool oldState_Archive;
+        private bool raiseFlag_Archive = false;
+
+
+        private bool DebugMode = false;
+        private string DebugStr;
+        public Worker(ILogger<Worker> logger, IOptions<ServiceOptions> options)
         {
             _logger = logger;
-            this.DesktopPath = DesktopPath;
+            _options = options;
             ExcelPackage.LicenseContext = LicenseContext.NonCommercial;
 
-            if (!Directory.Exists($"{DesktopPath}\\Report"))
+            if (!Directory.Exists($"{_options.Value.ReportDirectory}\\Report"))
             {
-                Directory.CreateDirectory($"{DesktopPath}\\Report");
+                Directory.CreateDirectory($"{_options.Value.ReportDirectory}\\Report");
             }
-            if (!Directory.Exists($"{DesktopPath}\\Report\\Excel"))
+            if (!Directory.Exists($"{_options.Value.ReportDirectory}\\Report\\Excel"))
             {
-                Directory.CreateDirectory($"{DesktopPath}\\Report\\Excel");
+                Directory.CreateDirectory($"{_options.Value.ReportDirectory}\\Report\\Excel");
             }
-            if (!Directory.Exists($"{DesktopPath}\\Report\\Excel\\Daily"))
+            if (!Directory.Exists($"{_options.Value.ReportDirectory}\\Report\\Excel\\Daily"))
             {
-                Directory.CreateDirectory($"{DesktopPath}\\Report\\Excel\\Daily");
+                Directory.CreateDirectory($"{_options.Value.ReportDirectory}\\Report\\Excel\\Daily");
             }
-            if (!Directory.Exists($"{DesktopPath}\\Report\\Excel\\Monthly"))
+            if (!Directory.Exists($"{_options.Value.ReportDirectory}\\Report\\Excel\\Monthly"))
             {
-                Directory.CreateDirectory($"{DesktopPath}\\Report\\Excel\\Monthly");
+                Directory.CreateDirectory($"{_options.Value.ReportDirectory}\\Report\\Excel\\Monthly");
             }
+            if (!Directory.Exists(_options.Value.BackupDirectory))
+            {
+                Directory.CreateDirectory(_options.Value.BackupDirectory);
+            }
+
+            CheckDbTableExist_Create();
         }
 
         private void AddDailySheets(MySqlConnection connection, ExcelPackage ep, string bayName, string sheetName, DateTime currentTime, int dbIndex, bool HV = false)
@@ -62,23 +76,28 @@ namespace QueryMysqlEveryFiveMinute
                 st.Cells[1, 1].LoadFromText($"BAYNAME,VALUE,TIMESTAMP,,kWh");
             }
             st.Column(3).Style.Numberformat.Format = @"yyyy/MM/dd HH:mm:ss.000";
-            DateTime Temp = currentTime.AddHours(-34);
+            DateTime Temp = currentTime.AddHours(-32).AddMinutes(-1);
             double td = 0;
-            for (int i=0; i < 1440; i++)
+            for (int i=0; i < 1442; i++)
             {
-                using (var command = new MySqlCommand($"select value, eventTime from analogevents where points_idPoint={dbIndex} and eventTime between '{Temp.AddMinutes(i).ToString("yyyy-MM-dd HH:mm")}' and '{Temp.AddMinutes(i+1).ToString("yyyy-MM-dd HH:mm")}' order by eventTime desc limit 1", connection))
+                using (var command = new MySqlCommand($"select value, eventTime from analogevents where points_idPoint={dbIndex} and eventTime between '{Temp.AddMinutes(i).ToString("yyyy-MM-dd HH:mm:00")}' and '{Temp.AddMinutes(i+1).ToString("yyyy-MM-dd HH:mm:00")}' order by eventTime desc limit 1", connection))
                 {
                     command.CommandTimeout = 6000;
                     using (var reader = command.ExecuteReader())
                         while (reader.Read())
                         {
+                            if (i == 0)
+                            {
+                                td = reader.GetDouble(0);
+                                break;
+                            }
                             if (HV)
                             {
-                                st.Cells[index++, 1].LoadFromText($"{bayName},{reader.GetDouble(0)},{reader.GetDateTime(1).AddHours(8).ToString("yyyy-MM-dd HH:mm:ss.fff")},{reader.GetDouble(0) - td},{(reader.GetDouble(0) - td) * 1000}");
+                                st.Cells[index++, 1].LoadFromText($"{bayName},{reader.GetDouble(0)},{reader.GetDateTime(1).AddHours(8).ToString("yyyy-MM-dd HH:mm:ss.fff")},,{reader.GetDouble(0) - td},{(reader.GetDouble(0) - td) * 1000}");
                             }
                             else
                             {
-                                st.Cells[index++, 1].LoadFromText($"{bayName},{reader.GetDouble(0)},{reader.GetDateTime(1).AddHours(8).ToString("yyyy-MM-dd HH:mm:ss.fff")},{reader.GetDouble(0) - td}");
+                                st.Cells[index++, 1].LoadFromText($"{bayName},{reader.GetDouble(0)},{reader.GetDateTime(1).AddHours(8).ToString("yyyy-MM-dd HH:mm:ss.fff")},,{reader.GetDouble(0) - td}");
                             }
 
                             td = reader.GetDouble(0);
@@ -108,30 +127,38 @@ namespace QueryMysqlEveryFiveMinute
             ExcelWorksheet st = ep.Workbook.Worksheets[$"{bayName}_{sheetName}"];
             if (HV)
             {
-                st.Cells[1, 1].LoadFromText($"BAYNAME,VALUE,TIMESTAMP,,MWh,KWh");
+                st.Cells[1, 1].LoadFromText($"BAYNAME,VALUE,TIMESTAMP,,MWh,kWh");
             }
             else
             {
-                st.Cells[1, 1].LoadFromText($"BAYNAME,VALUE,TIMESTAMP,,MWh");
+                st.Cells[1, 1].LoadFromText($"BAYNAME,VALUE,TIMESTAMP,,kWh");
             }
             st.Column(3).Style.Numberformat.Format = @"yyyy/MM/dd HH:mm:ss.000";
-            DateTime Temp = currentTime.AddHours(-8).AddMonths(-1);
+            DateTime LastMonth = currentTime.AddMonths(-1);
+            DateTime LastMonth_UTC = LastMonth.AddHours(-8);
+            DateTime Temp = new DateTime(LastMonth_UTC.Year, LastMonth_UTC.Month, DateTime.DaysInMonth(LastMonth_UTC.Year, LastMonth_UTC.Month) - 1, 16, 0, 0);
             double td = 0;
-            for (int i = 0; i < DateTime.DaysInMonth(Temp.Year, Temp.Month); i++)
+            for (int i = 0; i < DateTime.DaysInMonth(LastMonth.Year, LastMonth.Month) + 1; i++)
             {
-                using (var command = new MySqlCommand($"select value, eventTime from analogevents where points_idPoint={dbIndex} and eventTime between '{Temp.AddDays(i).ToString("yyyy-MM-dd")}' and '{Temp.AddDays(i+1).ToString("yyyy-MM-dd")}' order by eventTime desc limit 1", connection))
+                using (var command = new MySqlCommand($"select value, eventTime from analogevents where points_idPoint={dbIndex} and eventTime between '{Temp.AddDays(i).ToString("yyyy-MM-dd 16:00")}' and '{Temp.AddDays(i+1).ToString($"yyyy-MM-dd 16:00")}' order by eventTime desc limit 1", connection))
                 {
+                    _logger.LogInformation($"DATE:\nFROM:{Temp.AddDays(i).ToString("yyyy-MM-dd 16:00")}\nTO:{Temp.AddDays(i + 1).ToString($"yyyy-MM-dd 16:00")}");
                     command.CommandTimeout = 6000;
                     using (var reader = command.ExecuteReader())
                         while (reader.Read())
                         {
+                            if(i == 0)
+                            {
+                                td = reader.GetDouble(0);
+                                break;
+                            }
                             if (HV)
                             {
-                                st.Cells[index++, 1].LoadFromText($"{bayName},{reader.GetDouble(0)},{reader.GetDateTime(1).AddHours(8).ToString("yyyy-MM-dd HH:mm:ss.fff")},{reader.GetDouble(0) - td},{(reader.GetDouble(0) - td) * 1000}");
+                                st.Cells[index++, 1].LoadFromText($"{bayName},{reader.GetDouble(0)},{reader.GetDateTime(1).AddHours(8).ToString("yyyy-MM-dd HH:mm:ss.fff")},,{reader.GetDouble(0) - td},{(reader.GetDouble(0) - td) * 1000}");
                             }
                             else
                             {
-                                st.Cells[index++, 1].LoadFromText($"{bayName},{reader.GetDouble(0)},{reader.GetDateTime(1).AddHours(8).ToString("yyyy-MM-dd HH:mm:ss.fff")},{reader.GetDouble(0) - td}");
+                                st.Cells[index++, 1].LoadFromText($"{bayName},{reader.GetDouble(0)},{reader.GetDateTime(1).AddHours(8).ToString("yyyy-MM-dd HH:mm:ss.fff")},,{reader.GetDouble(0) - td}");
                             }
                             
                             td = reader.GetDouble(0);
@@ -153,8 +180,48 @@ namespace QueryMysqlEveryFiveMinute
                 st.Cells[1, 9].Value = "kWh";
                 st.Cells[1, 10].Formula = $"SUM(E2:E{st.Dimension.End.Row})";
             }
+
+            st.Cells.AutoFitColumns();
         }
 
+        private void CheckDbTableExist_Create()
+        {
+            string CreateTableQueryString = @"CREATE TABLE IF NOT EXISTS `actionlog` (
+	                    `IND` INT(11) NOT NULL AUTO_INCREMENT,
+	                    `ACTION` VARCHAR(50) NULL DEFAULT NULL COLLATE 'utf8_unicode_ci',
+	                    `DESCRIPTION` VARCHAR(50) NULL DEFAULT NULL COLLATE 'utf8_unicode_ci',
+	                    `DATETIME` DATETIME NULL DEFAULT NULL,
+	                    PRIMARY KEY (`IND`)
+                    )
+                    COLLATE='utf8_unicode_ci'
+                    ENGINE=InnoDB
+                    ;";
+            using (var connection = new MySqlConnection($"Server={_options.Value.MySQL_IpAddress};User ID={_options.Value.MySQL_User};Password={_options.Value.MySQL_Password};Database={_options.Value.MySQL_DbTable}"))
+            {
+                connection.Open();
+                
+                using (var command = new MySqlCommand(CreateTableQueryString, connection))
+                {
+                    command.CommandTimeout = 6000;
+                    command.ExecuteNonQuery();
+                }
+            }
+
+        }
+        private void InsertMsgToDbTable(string Action, string Message)
+        {
+            DateTime currentTime = DateTime.Now;
+            using (var connection = new MySqlConnection($"Server={_options.Value.MySQL_IpAddress};User ID={_options.Value.MySQL_User};Password={_options.Value.MySQL_Password};Database={_options.Value.MySQL_DbTable}"))
+            {
+                connection.Open();
+
+                using (var command = new MySqlCommand($"Insert into actionlog(ACTION,DESCRIPTION,DATETIME) values('{Action}','{Message}','{currentTime.ToString("yyyy-MM-dd HH:mm:ss.000")}')", connection))
+                {
+                    command.CommandTimeout = 6000;
+                    command.ExecuteNonQuery();
+                }
+            }
+        }
         protected override async Task ExecuteAsync(CancellationToken stoppingToken)
         {
             while (!stoppingToken.IsCancellationRequested)
@@ -162,20 +229,25 @@ namespace QueryMysqlEveryFiveMinute
                 DateTime currentTime = DateTime.Now;
 
                 oldState_Daily = raiseFlag_Daily;
-                raiseFlag_Daily = currentTime.Hour == 2 ? true : false;
+                raiseFlag_Daily = currentTime.Hour == _options.Value.DailyReportTime ? true : false;
 
                 oldState_Monthly = raiseFlag_Monthly;
                 raiseFlag_Monthly = currentTime.Day == 1 ? true : false;
 
+                oldState_Archive = raiseFlag_Archive;
+                raiseFlag_Archive = currentTime.Hour == _options.Value.ArchiveTime ? true : false;
+
+                DebugStr = DebugMode ? "_Debug" : "";
+
                 //Daily Report
-                if (oldState_Daily == false && raiseFlag_Daily == true)
+                if ((oldState_Daily == false && raiseFlag_Daily == true) || DebugMode)
                 {
                     _logger.LogInformation($"Query DB to Excel File...");
                     try
                     {
                         using (ExcelPackage ep = new ExcelPackage())
                         {
-                            using (var connection = new MySqlConnection("Server=127.0.0.1;User ID=root;Password=root;Database=icontrol_chenya"))
+                            using (var connection = new MySqlConnection($"Server={_options.Value.MySQL_IpAddress};User ID={_options.Value.MySQL_User};Password={_options.Value.MySQL_Password};Database={_options.Value.MySQL_DbTable}"))
                             {
                                 connection.Open();
 
@@ -241,7 +313,7 @@ namespace QueryMysqlEveryFiveMinute
                                 EVENTLIST.Cells.AutoFitColumns();
 
                                 //Save ExcelFile
-                                FileInfo fi = new FileInfo($"{DesktopPath}\\Report\\Excel\\Daily\\CHENYA-{currentTime.AddDays(-1).ToString("yyyyMMdd")}_DailyReport.xlsx");
+                                FileInfo fi = new FileInfo($"{_options.Value.ReportDirectory}\\Report\\Excel\\Daily\\CHENYA-{currentTime.AddDays(-1).ToString("yyyyMMdd")}_DailyReport{DebugStr}.xlsx");
                                 ep.SaveAs(fi);
                             }
                         }
@@ -252,11 +324,11 @@ namespace QueryMysqlEveryFiveMinute
                     }
                 }
                 //Monthly Report
-                if (oldState_Monthly == false && raiseFlag_Monthly == true)
+                if ((oldState_Monthly == false && raiseFlag_Monthly == true) || DebugMode)
                 {
                     using (ExcelPackage ep = new ExcelPackage())
                     {
-                        using (var connection = new MySqlConnection("Server=127.0.0.1;User ID=root;Password=root;Database=icontrol_chenya"))
+                        using (var connection = new MySqlConnection($"Server={_options.Value.MySQL_IpAddress};User ID={_options.Value.MySQL_User};Password={_options.Value.MySQL_Password};Database={_options.Value.MySQL_DbTable}"))
                         {
                             connection.Open();
 
@@ -309,8 +381,101 @@ namespace QueryMysqlEveryFiveMinute
                             AddMonthlySheets(connection, ep, "FEEDER_28", "FWD", currentTime, 1054);
                             AddMonthlySheets(connection, ep, "FEEDER_28", "REV", currentTime, 1052);
 
-                            FileInfo fi = new FileInfo($"{DesktopPath}\\Report\\Excel\\Monthly\\CHENYA-{currentTime.AddMonths(-1).ToString("yyyyMM")}_MonthlyReport.xlsx");
+                            FileInfo fi = new FileInfo($"{_options.Value.ReportDirectory}\\Report\\Excel\\Monthly\\CHENYA-{currentTime.AddMonths(-1).ToString("yyyyMM")}_MonthlyReport{DebugStr}.xlsx");
                             ep.SaveAs(fi);
+                        }
+                    }
+                }
+                //Archive Service
+                if((oldState_Archive == false && raiseFlag_Archive == true))
+                {
+                    _logger.LogInformation("--- Archive Service Start ---");
+                    InsertMsgToDbTable("ARCHIVE START", $"DATE: {currentTime.ToString("yyyy-MM-dd")} archive service start.");
+                    //Scan Database
+                    _logger.LogInformation("Scaning rawdata from MySQL...");
+                    using (var connection = new MySqlConnection($"Server={_options.Value.MySQL_IpAddress};User ID={_options.Value.MySQL_User};Password={_options.Value.MySQL_Password};Database={_options.Value.MySQL_DbTable}"))
+                    {
+                        connection.Open();
+                        DateTime QueryDate = currentTime.AddDays(-3);
+                        bool YesterdayHaveRawdata = true;
+                        int AddDay = 0;
+                        bool TodayHaveRawdata = false;
+                        int ScanIndex = 0;
+                        while (YesterdayHaveRawdata)
+                        {
+                            _logger.LogInformation($"DATE {QueryDate.AddDays(AddDay).ToString("yyyy-MM-dd")} scaning data.");
+                            //insert log to DB
+                            InsertMsgToDbTable("DATABASE SCAN START", $"DATE: {QueryDate.AddDays(AddDay).ToString("yyyy-MM-dd")} scan start.");
+                            using (var command = new MySqlCommand($"select idEvent from analogevents where TO_DAYS(eventTime) = TO_DAYS(\"{QueryDate.AddDays(AddDay).ToString("yyyy-MM-dd")}\") order by eventTime desc limit 1", connection))
+                            {
+                                command.CommandTimeout = 6000;
+                                using (var reader = command.ExecuteReader())
+                                    while (reader.Read())
+                                    {
+                                        TodayHaveRawdata = true;
+                                        ScanIndex = reader.GetInt32(0);
+                                    }
+                            }
+                            _logger.LogInformation($"DATE {QueryDate.AddDays(AddDay).ToString("yyyy-MM-dd")} scan completed.");
+                            //insert log to DB
+                            InsertMsgToDbTable("DATABASE SCAN END", $"DATE: {QueryDate.AddDays(AddDay).ToString("yyyy-MM-dd")} scan completed.");
+                            if (!TodayHaveRawdata)
+                            {
+                                InsertMsgToDbTable("NO DATA NEED ARCHIVE", $"DATE: {QueryDate.AddDays(AddDay).ToString("yyyy-MM-dd")} have no data to archive.");
+                                YesterdayHaveRawdata = false;
+                                _logger.LogInformation("There is no more rawdata to archive, exiting service..."); ;
+                                _logger.LogInformation("--- Archive Service Finished ---"); ;
+                                InsertMsgToDbTable("ARCHIVE FINISHED", $"DATE: {currentTime.ToString("yyyy-MM-dd")} archive service finished.");
+                                break;
+                            }
+                            _logger.LogInformation("Exporting rawdata from MySQL and saving file...");
+                            InsertMsgToDbTable("EXPORT DATA START", $"DATE: {QueryDate.AddDays(AddDay).ToString("yyyy-MM-dd")} exporting data, from ID: {ScanIndex}.");
+                            try
+                            {
+                                //Save SQL file
+                                FileStream StreamDB = new FileStream($"{_options.Value.BackupDirectory}\\{QueryDate.AddDays(AddDay).ToString("yyyy-MM-dd")}_Rawdata.sql", FileMode.Create, FileAccess.Write);
+                                using (StreamWriter SW = new StreamWriter(StreamDB))
+                                {
+                                    ProcessStartInfo proc = new ProcessStartInfo();
+                                    string cmd = $" --host={_options.Value.MySQL_IpAddress} --user={_options.Value.MySQL_User} --password={_options.Value.MySQL_Password} {_options.Value.MySQL_DbTable} analogevents --where=\"eventTime LIKE '{QueryDate.AddDays(AddDay).ToString("yyyy-MM-dd")}%'\"";
+                                    // Configure path for mysqldump.exe
+                                    proc.FileName = _options.Value.EXEPATH;
+                                    proc.RedirectStandardInput = false;
+                                    proc.RedirectStandardOutput = true;
+                                    proc.UseShellExecute = false;
+                                    proc.WindowStyle = ProcessWindowStyle.Minimized;
+                                    proc.Arguments = cmd;
+                                    proc.CreateNoWindow = true;
+                                    Process p = Process.Start(proc);
+                                    SW.Write(p.StandardOutput.ReadToEnd());
+                                    p.WaitForExit();
+                                    p.Close();
+                                    SW.Close();
+                                    StreamDB.Close();
+                                }
+                            }
+                            catch (Exception e)
+                            {
+                                _logger.LogError($"Error occured when exporting data: {e.Message}");
+                                InsertMsgToDbTable("ERROR OCCURED WHEN EXPORTING", $"DATE: {QueryDate.AddDays(AddDay).ToString("yyyy-MM-dd")} export failed.");
+                                continue;
+                            }
+                            TodayHaveRawdata = false;
+                            _logger.LogInformation($"SaveFile: \"{QueryDate.AddDays(AddDay).ToString("yyyy-MM-dd")}_Rawdata.sql\"");
+                            _logger.LogInformation($"DATE {QueryDate.AddDays(AddDay).ToString("yyyy-MM-dd")} archive completed.");
+                            InsertMsgToDbTable("EXPORT DATA END", $"DATE: {QueryDate.AddDays(AddDay).ToString("yyyy-MM-dd")} export completed and saving file.");
+
+                            //Remove rawdata from database
+                            _logger.LogInformation($"Remove \"{QueryDate.AddDays(AddDay).ToString("yyyy-MM-dd")}\" rawdata from database.");
+                            InsertMsgToDbTable("REMOVE DATA START", $"DATE: {QueryDate.AddDays(AddDay).ToString("yyyy-MM-dd")} removing data.");
+                            using (var command = new MySqlCommand($"delete from analogevents where TO_DAYS(eventTime) = TO_DAYS(\"{QueryDate.AddDays(AddDay).ToString("yyyy-MM-dd")}\")", connection))
+                            {
+                                command.CommandTimeout = 6000;
+                                command.ExecuteNonQuery();
+                            }
+                            _logger.LogInformation($"Remove completed.");
+                            InsertMsgToDbTable("REMOVE DATA END", $"DATE: {QueryDate.AddDays(AddDay).ToString("yyyy-MM-dd")} remove completed.");
+                            AddDay--;
                         }
                     }
                 }

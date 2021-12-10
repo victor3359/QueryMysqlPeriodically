@@ -17,8 +17,7 @@ namespace QueryMysqlEveryFiveMinute
                 .ConfigureServices((hostContext, services) =>
                 {
                     IConfiguration configuration = hostContext.Configuration;
-                    string DesktopPath = configuration.GetSection("DesktopPath").Get<string>();
-                    services.AddSingleton(DesktopPath);
+                    services.Configure<ServiceOptions>(configuration.GetSection(nameof(ServiceOptions)));
                     services.AddHostedService<Worker>();
                 });
     }
