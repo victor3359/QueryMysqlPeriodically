@@ -185,7 +185,7 @@ namespace QueryMysqlEveryFiveMinute
 
         private void CheckDbTableExist_Create()
         {
-            string CreateTableQueryString = @"CREATE TABLE IF NOT EXISTS `actionlog` (
+            string CreateTableQueryString = @"CREATE TABLE IF NOT EXISTS `archive_action_log` (
 	                    `IND` INT(11) NOT NULL AUTO_INCREMENT,
 	                    `ACTION` VARCHAR(50) NULL DEFAULT NULL COLLATE 'utf8_unicode_ci',
 	                    `DESCRIPTION` VARCHAR(100) NULL DEFAULT NULL COLLATE 'utf8_unicode_ci',
@@ -214,7 +214,7 @@ namespace QueryMysqlEveryFiveMinute
             {
                 connection.Open();
 
-                using (var command = new MySqlCommand($"Insert into actionlog(ACTION,DESCRIPTION,DATETIME) values('{Action}','{Message}','{currentTime.ToString("yyyy-MM-dd HH:mm:ss.000")}')", connection))
+                using (var command = new MySqlCommand($"Insert into archive_action_log(ACTION,DESCRIPTION,DATETIME) values('{Action}','{Message}','{currentTime.ToString("yyyy-MM-dd HH:mm:ss.000")}')", connection))
                 {
                     command.CommandTimeout = 6000;
                     command.ExecuteNonQuery();
@@ -395,7 +395,7 @@ namespace QueryMysqlEveryFiveMinute
                     using (var connection = new MySqlConnection($"Server={_options.Value.MySQL_IpAddress};User ID={_options.Value.MySQL_User};Password={_options.Value.MySQL_Password};Database={_options.Value.MySQL_DbTable}"))
                     {
                         connection.Open();
-                        DateTime QueryDate = currentTime.AddDays(-3);
+                        DateTime QueryDate = currentTime.AddDays(_options.Value.KeepDataAliveDays * -1);
                         bool YesterdayHaveRawdata = true;
                         int AddDay = 0;
                         bool TodayHaveRawdata = false;

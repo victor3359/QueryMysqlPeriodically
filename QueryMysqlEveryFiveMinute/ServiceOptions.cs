@@ -15,5 +15,6 @@ namespace QueryMysqlEveryFiveMinute
         public string EXEPATH { get; set; }
         public int ArchiveTime { get; set; }
         public int DailyReportTime { get; set; }
+        public int KeepDataAliveDays { get; set; }
     }
 }
