@@ -2,7 +2,7 @@
 using System.Collections.Generic;
 using System.Text;
 
-namespace QueryMysqlEveryFiveMinute
+namespace ICP_REPORT_SERVICE
 {
     public class ServiceOptions
     {

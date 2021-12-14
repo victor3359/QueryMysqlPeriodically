@@ -2,7 +2,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 
-namespace QueryMysqlEveryFiveMinute
+namespace ICP_REPORT_SERVICE
 {
     public class Program
     {

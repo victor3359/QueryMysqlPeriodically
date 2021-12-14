@@ -13,7 +13,7 @@ using MySqlConnector;
 using OfficeOpenXml;
 using System.Diagnostics;
 
-namespace QueryMysqlEveryFiveMinute
+namespace ICP_REPORT_SERVICE
 {
     public class Worker : BackgroundService
     {
@@ -406,7 +406,7 @@ namespace QueryMysqlEveryFiveMinute
                             _logger.LogInformation($"DATE {QueryDate.AddDays(AddDay).ToString("yyyy-MM-dd")} scaning data.");
                             //insert log to DB
                             InsertMsgToDbTable("DATABASE SCAN START", $"DATE: {QueryDate.AddDays(AddDay).ToString("yyyy-MM-dd")} scaning data.");
-                            using (var scan_end = new MySqlCommand($"select idEvent from analogevents where TO_DAYS(eventTime) = TO_DAYS(\"{QueryDate.AddDays(AddDay).ToString("yyyy-MM-dd")}\") order by eventTime desc limit 1", connection))
+                            using (var scan_end = new MySqlCommand($"select idEvent from analogevents where eventTime between '{QueryDate.AddDays(AddDay - 1).ToString("yyyy/MM/dd 16:00:00")}' and '{QueryDate.AddDays(AddDay).ToString("yyyy/MM/dd 16:00:00")}' order by eventTime desc limit 1", connection))
                             {
                                 scan_end.CommandTimeout = 6000;
                                 using (var result_end = scan_end.ExecuteReader())
@@ -416,7 +416,7 @@ namespace QueryMysqlEveryFiveMinute
                                         ScanIndex_End = result_end.GetInt32(0);
                                     }
                             }
-                            using (var scan_start = new MySqlCommand($"select idEvent from analogevents where TO_DAYS(eventTime) = TO_DAYS(\"{QueryDate.AddDays(AddDay).ToString("yyyy-MM-dd")}\") order by eventTime asc limit 1", connection))
+                            using (var scan_start = new MySqlCommand($"select idEvent from analogevents where eventTime between '{QueryDate.AddDays(AddDay - 1).ToString("yyyy/MM/dd 16:00:00")}' and '{QueryDate.AddDays(AddDay).ToString("yyyy/MM/dd 16:00:00")}' order by eventTime asc limit 1", connection))
                             {
                                 scan_start.CommandTimeout = 6000;
                                 using (var result_start = scan_start.ExecuteReader())
@@ -446,7 +446,7 @@ namespace QueryMysqlEveryFiveMinute
                                 using (StreamWriter SW = new StreamWriter(StreamDB))
                                 {
                                     ProcessStartInfo proc = new ProcessStartInfo();
-                                    string cmd = $" --host={_options.Value.MySQL_IpAddress} --user={_options.Value.MySQL_User} --password={_options.Value.MySQL_Password} {_options.Value.MySQL_DbTable} analogevents --where=\"eventTime LIKE '{QueryDate.AddDays(AddDay).ToString("yyyy-MM-dd")}%'\"";
+                                    string cmd = $" --host={_options.Value.MySQL_IpAddress} --user={_options.Value.MySQL_User} --password={_options.Value.MySQL_Password} {_options.Value.MySQL_DbTable} analogevents --where=\"eventTime between '{QueryDate.AddDays(AddDay - 1).ToString("yyyy/MM/dd 16:00:00")}' and '{QueryDate.AddDays(AddDay).ToString("yyyy/MM/dd 16:00:00")}'\"";
                                     // Configure path for mysqldump.exe
                                     proc.FileName = _options.Value.EXEPATH;
                                     proc.RedirectStandardInput = false;

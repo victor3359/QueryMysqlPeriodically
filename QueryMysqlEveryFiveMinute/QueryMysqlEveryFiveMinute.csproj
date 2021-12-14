@@ -1,9 +1,17 @@
-<Project Sdk="Microsoft.NET.Sdk.Worker">
+﻿<Project Sdk="Microsoft.NET.Sdk.Worker">
 
   <PropertyGroup>
     <TargetFramework>netcoreapp3.1</TargetFramework>
     <UserSecretsId>dotnet-QueryMysqlEveryFiveMinute-273CE657-7D13-4A25-85C0-0149ACFA7735</UserSecretsId>
     <ApplicationIcon>ICPSI-Logo.ico</ApplicationIcon>
+    <AssemblyName>ICP REPORT SERVICE</AssemblyName>
+    <RootNamespace>ICP_REPORT_SERVICE</RootNamespace>
+    <Authors>Victor Liu</Authors>
+    <Company>ICPSI</Company>
+    <PackageRequireLicenseAcceptance>false</PackageRequireLicenseAcceptance>
+    <NeutralLanguage>zh-TW</NeutralLanguage>
+    <Copyright>Victor Liu</Copyright>
+    <SignAssembly>false</SignAssembly>
   </PropertyGroup>
 
   <ItemGroup>
