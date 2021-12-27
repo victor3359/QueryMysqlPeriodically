@@ -8,6 +8,7 @@ using System.Globalization;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
+using System.IO.Compression;
 
 using MySqlConnector;
 using OfficeOpenXml;
@@ -416,19 +417,22 @@ namespace ICP_REPORT_SERVICE
                                         ScanIndex_End = result_end.GetInt32(0);
                                     }
                             }
-                            using (var scan_start = new MySqlCommand($"select idEvent from analogevents where eventTime between '{QueryDate.AddDays(AddDay - 1).ToString("yyyy/MM/dd 16:00:00")}' and '{QueryDate.AddDays(AddDay).ToString("yyyy/MM/dd 16:00:00")}' order by eventTime asc limit 1", connection))
-                            {
-                                scan_start.CommandTimeout = 6000;
-                                using (var result_start = scan_start.ExecuteReader())
-                                    while (result_start.Read())
-                                    {
-                                        ScanIndex_Start = result_start.GetInt32(0);
-                                    }
-                            }
                             _logger.LogInformation($"DATE {QueryDate.AddDays(AddDay).ToString("yyyy-MM-dd")} scan completed.");
                             //insert log to DB
                             InsertMsgToDbTable("DATABASE SCAN END", $"DATE: {QueryDate.AddDays(AddDay).ToString("yyyy-MM-dd")} scan completed.");
-                            if (!TodayHaveRawdata)
+                            if (TodayHaveRawdata)
+                            {
+                                using (var scan_start = new MySqlCommand($"select idEvent from analogevents where eventTime between '{QueryDate.AddDays(AddDay - 1).ToString("yyyy/MM/dd 16:00:00")}' and '{QueryDate.AddDays(AddDay).ToString("yyyy/MM/dd 16:00:00")}' order by eventTime asc limit 1", connection))
+                                {
+                                    scan_start.CommandTimeout = 6000;
+                                    using (var result_start = scan_start.ExecuteReader())
+                                        while (result_start.Read())
+                                        {
+                                            ScanIndex_Start = result_start.GetInt32(0);
+                                        }
+                                }
+                            }
+                            else
                             {
                                 InsertMsgToDbTable("NO DATA NEED ARCHIVE", $"DATE: {QueryDate.AddDays(AddDay).ToString("yyyy-MM-dd")} have no data to archive.");
                                 YesterdayHaveRawdata = false;
@@ -437,31 +441,37 @@ namespace ICP_REPORT_SERVICE
                                 InsertMsgToDbTable("ARCHIVE FINISHED", $"DATE: {currentTime.ToString("yyyy-MM-dd")} archive service finished.");
                                 break;
                             }
+                            
                             _logger.LogInformation("Exporting rawdata from MySQL and saving file...");
                             InsertMsgToDbTable("EXPORT DATA START", $"DATE: {QueryDate.AddDays(AddDay).ToString("yyyy-MM-dd")} exporting data, from ID: {ScanIndex_Start} to {ScanIndex_End}.");
                             try
                             {
-                                //Save SQL file
-                                FileStream StreamDB = new FileStream($"{_options.Value.BackupDirectory}\\{QueryDate.AddDays(AddDay).ToString("yyyy-MM-dd")}_Rawdata.sql", FileMode.Create, FileAccess.Write);
-                                using (StreamWriter SW = new StreamWriter(StreamDB))
+                                //Compress and save SQL file to *.zip
+                                using (FileStream zipToOpen = new FileStream($"{_options.Value.BackupDirectory}\\{QueryDate.AddDays(AddDay).ToString("yyyy-MM-dd")}_Rawdata.zip", FileMode.Create))
                                 {
-                                    ProcessStartInfo proc = new ProcessStartInfo();
-                                    string cmd = $" --host={_options.Value.MySQL_IpAddress} --user={_options.Value.MySQL_User} --password={_options.Value.MySQL_Password} {_options.Value.MySQL_DbTable} analogevents --where=\"eventTime between '{QueryDate.AddDays(AddDay - 1).ToString("yyyy/MM/dd 16:00:00")}' and '{QueryDate.AddDays(AddDay).ToString("yyyy/MM/dd 16:00:00")}'\"";
-                                    // Configure path for mysqldump.exe
-                                    proc.FileName = _options.Value.EXEPATH;
-                                    proc.RedirectStandardInput = false;
-                                    proc.RedirectStandardOutput = true;
-                                    proc.UseShellExecute = false;
-                                    proc.WindowStyle = ProcessWindowStyle.Minimized;
-                                    proc.Arguments = cmd;
-                                    proc.CreateNoWindow = true;
-                                    Process p = Process.Start(proc);
-                                    SW.Write(p.StandardOutput.ReadToEnd());
-                                    p.WaitForExit();
-                                    p.Close();
-                                    SW.Close();
-                                    StreamDB.Close();
+                                    using (ZipArchive archive = new ZipArchive(zipToOpen, ZipArchiveMode.Update))
+                                    {
+                                        ZipArchiveEntry readmeEntry = archive.CreateEntry($"{QueryDate.AddDays(AddDay).ToString("yyyy-MM-dd")}_Rawdata.sql");
+                                        using (StreamWriter writer = new StreamWriter(readmeEntry.Open()))
+                                        {
+                                            ProcessStartInfo proc = new ProcessStartInfo();
+                                            string cmd = $"--skip-tz-utc --no-create-info --host={_options.Value.MySQL_IpAddress} --user={_options.Value.MySQL_User} --password={_options.Value.MySQL_Password} {_options.Value.MySQL_DbTable} analogevents --where=\"eventTime between '{QueryDate.AddDays(AddDay - 1).ToString("yyyy/MM/dd 16:00:00")}' and '{QueryDate.AddDays(AddDay).ToString("yyyy/MM/dd 16:00:00")}'\"";
+                                            // Configure path for mysqldump.exe
+                                            proc.FileName = _options.Value.EXEPATH;
+                                            proc.RedirectStandardInput = false;
+                                            proc.RedirectStandardOutput = true;
+                                            proc.UseShellExecute = false;
+                                            proc.WindowStyle = ProcessWindowStyle.Minimized;
+                                            proc.Arguments = cmd;
+                                            proc.CreateNoWindow = true;
+                                            Process p = Process.Start(proc);
+                                            writer.Write(p.StandardOutput.ReadToEnd());
+                                            p.WaitForExit();
+                                            p.Close();
+                                        }
+                                    }
                                 }
+
                             }
                             catch (Exception e)
                             {
