@@ -29,7 +29,12 @@ namespace ICP_REPORT_SERVICE
 
         private bool oldState_Archive;
         private bool raiseFlag_Archive = false;
+        private bool Archive_Is_Finished = true;
 
+        // If True, will just archive database.
+        private bool ArchiveOnly = true;
+
+        // If Debugmode, output file will add debug text.
         private bool DebugMode = false;
         private string DebugStr;
         public Worker(ILogger<Worker> logger, IOptions<ServiceOptions> options)
@@ -240,7 +245,7 @@ namespace ICP_REPORT_SERVICE
                 DebugStr = DebugMode ? "_Debug" : "";
 
                 //Daily Report
-                if ((oldState_Daily == false && raiseFlag_Daily == true) || DebugMode)
+                if ((oldState_Daily == false && raiseFlag_Daily == true && ArchiveOnly == false) || DebugMode)
                 {
                     _logger.LogInformation($"Query DB to Excel File...");
                     try
@@ -324,7 +329,7 @@ namespace ICP_REPORT_SERVICE
                     }
                 }
                 //Monthly Report
-                if ((oldState_Monthly == false && raiseFlag_Monthly == true) || DebugMode)
+                if ((oldState_Monthly == false && raiseFlag_Monthly == true && ArchiveOnly == false) || DebugMode)
                 {
                     using (ExcelPackage ep = new ExcelPackage())
                     {
@@ -387,8 +392,9 @@ namespace ICP_REPORT_SERVICE
                     }
                 }
                 //Archive Service
-                if((oldState_Archive == false && raiseFlag_Archive == true))
+                if(oldState_Archive == false && raiseFlag_Archive == true && Archive_Is_Finished == true)
                 {
+                    Archive_Is_Finished = false;
                     _logger.LogInformation("--- Archive Service Start ---");
                     InsertMsgToDbTable("ARCHIVE START", $"DATE: {currentTime.ToString("yyyy-MM-dd")} archive service start.");
                     //Scan Database
@@ -407,7 +413,7 @@ namespace ICP_REPORT_SERVICE
                             _logger.LogInformation($"DATE {QueryDate.AddDays(AddDay).ToString("yyyy-MM-dd")} scaning data.");
                             //insert log to DB
                             InsertMsgToDbTable("DATABASE SCAN START", $"DATE: {QueryDate.AddDays(AddDay).ToString("yyyy-MM-dd")} scaning data.");
-                            using (var scan_end = new MySqlCommand($"select idEvent from analogevents where eventTime between '{QueryDate.AddDays(AddDay - 1).ToString("yyyy/MM/dd 16:00:00")}' and '{QueryDate.AddDays(AddDay).ToString("yyyy/MM/dd 16:00:00")}' order by eventTime desc limit 1", connection))
+                            using (var scan_end = new MySqlCommand($"select idEvent from analogevents where eventTime < '{QueryDate.AddDays(AddDay).ToString("yyyy-MM-dd 16:00:00")}' and eventTime > '{QueryDate.AddDays(AddDay - 1).ToString("yyyy-MM-dd 15:59:59")}' order by eventTime desc limit 1", connection))
                             {
                                 scan_end.CommandTimeout = 6000;
                                 using (var result_end = scan_end.ExecuteReader())
@@ -422,7 +428,7 @@ namespace ICP_REPORT_SERVICE
                             InsertMsgToDbTable("DATABASE SCAN END", $"DATE: {QueryDate.AddDays(AddDay).ToString("yyyy-MM-dd")} scan completed.");
                             if (TodayHaveRawdata)
                             {
-                                using (var scan_start = new MySqlCommand($"select idEvent from analogevents where eventTime between '{QueryDate.AddDays(AddDay - 1).ToString("yyyy/MM/dd 16:00:00")}' and '{QueryDate.AddDays(AddDay).ToString("yyyy/MM/dd 16:00:00")}' order by eventTime asc limit 1", connection))
+                                using (var scan_start = new MySqlCommand($"select idEvent from analogevents where eventTime < '{QueryDate.AddDays(AddDay).ToString("yyyy-MM-dd 16:00:00")}' and eventTime > '{QueryDate.AddDays(AddDay - 1).ToString("yyyy-MM-dd 15:59:59")}' order by eventTime asc limit 1", connection))
                                 {
                                     scan_start.CommandTimeout = 6000;
                                     using (var result_start = scan_start.ExecuteReader())
@@ -455,7 +461,7 @@ namespace ICP_REPORT_SERVICE
                                         using (StreamWriter writer = new StreamWriter(readmeEntry.Open()))
                                         {
                                             ProcessStartInfo proc = new ProcessStartInfo();
-                                            string cmd = $"--skip-tz-utc --no-create-info --host={_options.Value.MySQL_IpAddress} --user={_options.Value.MySQL_User} --password={_options.Value.MySQL_Password} {_options.Value.MySQL_DbTable} analogevents --where=\"eventTime between '{QueryDate.AddDays(AddDay - 1).ToString("yyyy/MM/dd 16:00:00")}' and '{QueryDate.AddDays(AddDay).ToString("yyyy/MM/dd 16:00:00")}'\"";
+                                            string cmd = $"--skip-tz-utc --no-create-info --host={_options.Value.MySQL_IpAddress} --user={_options.Value.MySQL_User} --password={_options.Value.MySQL_Password} {_options.Value.MySQL_DbTable} analogevents --where=\"eventTime < '{QueryDate.AddDays(AddDay).ToString("yyyy-MM-dd 16:00:00")}' and eventTime > '{QueryDate.AddDays(AddDay - 1).ToString("yyyy-MM-dd 15:59:59")}'\"";
                                             // Configure path for mysqldump.exe
                                             proc.FileName = _options.Value.EXEPATH;
                                             proc.RedirectStandardInput = false;
@@ -480,23 +486,35 @@ namespace ICP_REPORT_SERVICE
                                 continue;
                             }
                             TodayHaveRawdata = false;
-                            _logger.LogInformation($"SaveFile: \"{QueryDate.AddDays(AddDay).ToString("yyyy-MM-dd")}_Rawdata.sql\"");
+                            _logger.LogInformation($"SaveFile: \"{QueryDate.AddDays(AddDay).ToString("yyyy-MM-dd")}_Rawdata.zip\"");
                             _logger.LogInformation($"DATE {QueryDate.AddDays(AddDay).ToString("yyyy-MM-dd")} archive completed.");
-                            InsertMsgToDbTable("EXPORT DATA END", $"DATE: {QueryDate.AddDays(AddDay).ToString("yyyy-MM-dd")} export completed and saving file.");
+                            InsertMsgToDbTable("EXPORT DATA END", $"DATE: {QueryDate.AddDays(AddDay).ToString("yyyy-MM-dd")}.zip export completed and saving file.");
 
                             //Remove rawdata from database
                             _logger.LogInformation($"Remove \"{QueryDate.AddDays(AddDay).ToString("yyyy-MM-dd")}\" rawdata from database.");
-                            InsertMsgToDbTable("REMOVE DATA START", $"DATE: {QueryDate.AddDays(AddDay).ToString("yyyy-MM-dd")} removing data.");
-                            using (var command = new MySqlCommand($"delete from analogevents where TO_DAYS(eventTime) = TO_DAYS(\"{QueryDate.AddDays(AddDay).ToString("yyyy-MM-dd")}\")", connection))
+                            InsertMsgToDbTable("REMOVE DATA START", $"DATE: {QueryDate.AddDays(AddDay).ToString("yyyy-MM-dd")} removing old data.");
+                            using (var command = new MySqlCommand($"delete from analogevents where eventTime < '{QueryDate.AddDays(AddDay).ToString("yyyy-MM-dd 16:00:00")}' and eventTime > '{QueryDate.AddDays(AddDay-1).ToString("yyyy-MM-dd 15:59:59")}' order by eventTime", connection))
                             {
-                                command.CommandTimeout = 6000;
+                                command.CommandTimeout = 604800;
                                 command.ExecuteNonQuery();
                             }
                             _logger.LogInformation($"Remove completed.");
                             InsertMsgToDbTable("REMOVE DATA END", $"DATE: {QueryDate.AddDays(AddDay).ToString("yyyy-MM-dd")} remove completed.");
+
                             AddDay--;
                         }
+                        //Remove rawdata from database
+                        /*_logger.LogInformation($"Remove \"{QueryDate.ToString("yyyy-MM-dd")}\" rawdata from database.");
+                        InsertMsgToDbTable("REMOVE DATA START", $"DATE: {QueryDate.ToString("yyyy-MM-dd")} removing old data.");
+                        using (var command = new MySqlCommand($"delete from analogevents where eventTime < '{QueryDate.ToString("yyyy-MM-dd 16:00:00")} and eventTime > '{QueryDate.ToString("yyyy-MM-dd 15:59:59")}' order by eventTime", connection))
+                        {
+                            command.CommandTimeout = 604800;
+                            command.ExecuteNonQuery();
+                        }
+                        _logger.LogInformation($"Remove completed.");
+                        InsertMsgToDbTable("REMOVE DATA END", $"DATE: {QueryDate.AddDays(AddDay).ToString("yyyy-MM-dd")} remove completed.");*/
                     }
+                    Archive_Is_Finished = true;
                 }
                 await Task.Delay(1000, stoppingToken);
             }
