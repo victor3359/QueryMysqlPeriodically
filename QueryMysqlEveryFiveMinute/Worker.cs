@@ -27,15 +27,22 @@ namespace ICP_REPORT_SERVICE
         private bool oldState_Monthly;
         private bool raiseFlag_Monthly = false;
 
+        private bool oldState_TenDays;
+        private bool raiseFlag_TenDays = false;
+        private int raiseState_TenDays = 0;
+
         private bool oldState_Archive;
         private bool raiseFlag_Archive = false;
         private bool Archive_Is_Finished = true;
 
         // If True, will just archive database.
-        private bool ArchiveOnly = true;
+        private bool ArchiveOnly = false;
+
+        // If True, will just output reports.
+        private bool ReportOnly = true;
 
         // If Debugmode, output file will add debug text.
-        private bool DebugMode = false;
+        private bool DebugMode = true;
         private string DebugStr;
         public Worker(ILogger<Worker> logger, IOptions<ServiceOptions> options)
         {
@@ -58,6 +65,10 @@ namespace ICP_REPORT_SERVICE
             if (!Directory.Exists($"{_options.Value.ReportDirectory}\\Report\\Excel\\Monthly"))
             {
                 Directory.CreateDirectory($"{_options.Value.ReportDirectory}\\Report\\Excel\\Monthly");
+            }
+            if (!Directory.Exists($"{_options.Value.ReportDirectory}\\Report\\Excel\\TenDays"))
+            {
+                Directory.CreateDirectory($"{_options.Value.ReportDirectory}\\Report\\Excel\\TenDays");
             }
             if (!Directory.Exists(_options.Value.BackupDirectory))
             {
@@ -239,13 +250,228 @@ namespace ICP_REPORT_SERVICE
                 oldState_Monthly = raiseFlag_Monthly;
                 raiseFlag_Monthly = currentTime.Day == 1 ? true : false;
 
+                oldState_TenDays = raiseFlag_TenDays;
+                oldState_TenDays = raiseFlag_TenDays;
+                switch (currentTime.Day)
+                {
+                    case 1:
+                        raiseState_TenDays = 0;
+                        raiseFlag_TenDays = true;
+                        break;
+                    case 11:
+                        raiseState_TenDays = 1;
+                        raiseFlag_TenDays = true;
+                        break;
+                    case 21:
+                        raiseState_TenDays = 2;
+                        raiseFlag_TenDays = true;
+                        break;
+                    default:
+                        raiseFlag_TenDays = false;
+                        break;
+                }
+
                 oldState_Archive = raiseFlag_Archive;
                 raiseFlag_Archive = currentTime.Hour == _options.Value.ArchiveTime ? true : false;
 
                 DebugStr = DebugMode ? "_Debug" : "";
 
+                //TenDays Report
+                if ((oldState_TenDays == false && raiseFlag_TenDays == true && ArchiveOnly == false))
+                {
+                    DateTime temp;
+                    temp = currentTime.AddDays(-10);
+                    if (raiseState_TenDays == 0)
+                    {
+                        temp = new DateTime(temp.Year, temp.Month, 21, 0, 0, 0);
+                    }
+                    else
+                    {
+                        temp = new DateTime(temp.Year, temp.Month, temp.Day, 0, 0, 0);
+                    }
+                    if (!File.Exists($"{ _options.Value.ReportDirectory}\\Report\\Excel\\TenDays\\CHENYA_TaipowerMonthlyReport_{temp.Month}月.xlsx"))
+                    {
+                        File.Copy(@"Template/CHENYA_TaipowerMonthlyTemplate.xlsx",
+                            $"{ _options.Value.ReportDirectory}\\Report\\Excel\\TenDays\\CHENYA_TaipowerMonthlyReport_{temp.Month}月.xlsx");
+                    }
+                    if (!File.Exists($"{ _options.Value.ReportDirectory}\\Report\\Excel\\TenDays\\HOLDGOOD_TaipowerMonthlyReport_{temp.Month}月.xlsx"))
+                    {
+                        File.Copy(@"Template/HOLDGOOD_TaipowerMonthlyTemplate.xlsx",
+                            $"{ _options.Value.ReportDirectory}\\Report\\Excel\\TenDays\\HOLDGOOD_TaipowerMonthlyReport_{temp.Month}月.xlsx");
+                    }
+                    _logger.LogInformation($"Query DB to Excel File...");
+                    try
+                    {
+                        using (ExcelPackage ep = new ExcelPackage(new FileInfo($"{ _options.Value.ReportDirectory}\\Report\\Excel\\TenDays\\CHENYA_TaipowerMonthlyReport_{temp.Month}月.xlsx")))
+                        {
+                            using (var connection = new MySqlConnection($"Server={_options.Value.MySQL_IpAddress};User ID={_options.Value.MySQL_User};Password={_options.Value.MySQL_Password};Database={_options.Value.MySQL_DbTable}"))
+                            {
+                                connection.Open();
+                                //Do something
+                                string old_ws_name = "", ws_name = " ";
+                                switch (raiseState_TenDays)
+                                {
+                                    case 0:
+                                        old_ws_name = "X月下";
+                                        ws_name = $"{temp.Month}月下";
+                                        break;
+                                    case 1:
+                                        old_ws_name = "X月上";
+                                        ws_name = $"{temp.Month}月上";
+                                        break;
+                                    case 2:
+                                        old_ws_name = "X月中";
+                                        ws_name = $"{temp.Month}月中";
+                                        break;
+                                }
+                                var ws = ep.Workbook.Worksheets.SingleOrDefault(x => x.Name == old_ws_name);
+                                // Init for WorkSheets
+                                ws.Name = ws_name;
+                                if (raiseState_TenDays == 0)
+                                {
+                                    for (int i = 1; i < (DateTime.DaysInMonth(temp.Year, temp.Month) - 20) * 2 + 1; i++)
+                                    {
+                                        ws.Cells[i + 6, 2].Value = temp.Year - 1911;
+                                        ws.Cells[i + 6, 6].Value = temp.Month;
+                                        ws.Cells[i + 6, 8].Value = 21 + ((i - 1) / 2);
+                                    }
+                                }
+                                else
+                                {
+                                    for (int i = 1; i < 21; i++)
+                                    {
+                                        ws.Cells[i + 6, 2].Value = temp.Year - 1911;
+                                        ws.Cells[i + 6, 6].Value = temp.Month;
+                                    }
+                                }
+                                DateTime temp_UTC = temp.AddHours(-8);
+                                int row_format = 0;
+                                for (int DayOfMonth = 0; DayOfMonth < 11; DayOfMonth++)
+                                {
+                                    if (DayOfMonth == (DateTime.DaysInMonth(temp.Year, temp.Month) - 20))
+                                    {
+                                        break;
+                                    }
+                                    for (int HourOfDay = 0; HourOfDay < 24; HourOfDay++)
+                                    {
+                                        double Last_Value = 0, First_Value = 0;
+                                        using (var command = new MySqlCommand($"select value from analogevents where points_idPoint=1064 and eventTime " +
+                                            $"between '{temp_UTC.AddHours(HourOfDay).ToString("yyyy-MM-dd HH:00")}' and '{temp_UTC.AddHours(HourOfDay + 1).ToString("yyyy-MM-dd HH:00")}' order by eventTime desc limit 1", connection))
+                                        {
+                                            command.CommandTimeout = 6000;
+                                            using (var reader = command.ExecuteReader())
+                                                while (reader.Read())
+                                                {
+                                                    Last_Value = reader.GetDouble(0);
+                                                }
+                                        }
+                                        using (var command = new MySqlCommand($"select value from analogevents where points_idPoint=1064 and eventTime " +
+                                            $"between '{temp_UTC.AddDays(DayOfMonth).AddHours(HourOfDay).ToString("yyyy-MM-dd HH:00")}' and '{temp_UTC.AddDays(DayOfMonth).AddHours(HourOfDay + 1).ToString("yyyy-MM-dd HH:00")}' order by eventTime asc limit 1", connection))
+                                        {
+                                            command.CommandTimeout = 6000;
+                                            using (var reader = command.ExecuteReader())
+                                                while (reader.Read())
+                                                {
+                                                    First_Value = reader.GetDouble(0);
+                                                }
+                                        }
+
+                                        ws.Cells[7 + DayOfMonth + row_format + (HourOfDay / 12), 14 + (HourOfDay % 12)].Value = Last_Value - First_Value;
+                                    }
+                                    row_format++;
+                                }
+                                ep.Save();
+                            }
+                        }
+                        using (ExcelPackage ep = new ExcelPackage(new FileInfo($"{ _options.Value.ReportDirectory}\\Report\\Excel\\TenDays\\HOLDGOOD_TaipowerMonthlyReport_{temp.Month}月.xlsx")))
+                        {
+                            using (var connection = new MySqlConnection($"Server={_options.Value.MySQL_IpAddress};User ID={_options.Value.MySQL_User};Password={_options.Value.MySQL_Password};Database={_options.Value.MySQL_DbTable}"))
+                            {
+                                connection.Open();
+                                //Do something
+                                string old_ws_name = "", ws_name = " ";
+                                switch (raiseState_TenDays)
+                                {
+                                    case 0:
+                                        old_ws_name = "X月下";
+                                        ws_name = $"{temp.Month}月下";
+                                        break;
+                                    case 1:
+                                        old_ws_name = "X月上";
+                                        ws_name = $"{temp.Month}月上";
+                                        break;
+                                    case 2:
+                                        old_ws_name = "X月中";
+                                        ws_name = $"{temp.Month}月中";
+                                        break;
+                                }
+                                var ws = ep.Workbook.Worksheets.SingleOrDefault(x => x.Name == old_ws_name);
+                                // Init for WorkSheets
+                                ws.Name = ws_name;
+                                if (raiseState_TenDays == 0)
+                                {
+                                    for (int i = 1; i < (DateTime.DaysInMonth(temp.Year, temp.Month) - 20) * 2 + 1; i++)
+                                    {
+                                        ws.Cells[i + 6, 2].Value = temp.Year - 1911;
+                                        ws.Cells[i + 6, 6].Value = temp.Month;
+                                        ws.Cells[i + 6, 8].Value = 21 + ((i - 1) / 2);
+                                    }
+                                }
+                                else
+                                {
+                                    for (int i = 1; i < 21; i++)
+                                    {
+                                        ws.Cells[i + 6, 2].Value = temp.Year - 1911;
+                                        ws.Cells[i + 6, 6].Value = temp.Month;
+                                    }
+                                }
+                                DateTime temp_UTC = temp.AddHours(-8);
+                                int row_format = 0;
+                                for (int DayOfMonth = 0; DayOfMonth < 11; DayOfMonth++)
+                                {
+                                    if (DayOfMonth == (DateTime.DaysInMonth(temp.Year, temp.Month) - 20))
+                                    {
+                                        break;
+                                    }
+                                    for (int HourOfDay = 0; HourOfDay < 24; HourOfDay++)
+                                    {
+                                        double Last_Value = 0, First_Value = 0;
+                                        using (var command = new MySqlCommand($"select value from analogevents where points_idPoint=1068 and eventTime " +
+                                            $"between '{temp_UTC.AddHours(HourOfDay).ToString("yyyy-MM-dd HH:00")}' and '{temp_UTC.AddHours(HourOfDay + 1).ToString("yyyy-MM-dd HH:00")}' order by eventTime desc limit 1", connection))
+                                        {
+                                            command.CommandTimeout = 6000;
+                                            using (var reader = command.ExecuteReader())
+                                                while (reader.Read())
+                                                {
+                                                    Last_Value = reader.GetDouble(0);
+                                                }
+                                        }
+                                        using (var command = new MySqlCommand($"select value from analogevents where points_idPoint=1068 and eventTime " +
+                                            $"between '{temp_UTC.AddDays(DayOfMonth).AddHours(HourOfDay).ToString("yyyy-MM-dd HH:00")}' and '{temp_UTC.AddDays(DayOfMonth).AddHours(HourOfDay + 1).ToString("yyyy-MM-dd HH:00")}' order by eventTime asc limit 1", connection))
+                                        {
+                                            command.CommandTimeout = 6000;
+                                            using (var reader = command.ExecuteReader())
+                                                while (reader.Read())
+                                                {
+                                                    First_Value = reader.GetDouble(0);
+                                                }
+                                        }
+
+                                        ws.Cells[7 + DayOfMonth + row_format + (HourOfDay / 12), 14 + (HourOfDay % 12)].Value = Last_Value - First_Value;
+                                    }
+                                    row_format++;
+                                }
+                                ep.Save();
+                            }
+                        }
+                    }
+                    catch (Exception e)
+                    {
+                        _logger.LogError(e.Message);
+                    }
+                }
                 //Daily Report
-                if ((oldState_Daily == false && raiseFlag_Daily == true && ArchiveOnly == false) || DebugMode)
+                if ((oldState_Daily == false && raiseFlag_Daily == true && ArchiveOnly == false))
                 {
                     _logger.LogInformation($"Query DB to Excel File...");
                     try
@@ -390,9 +616,271 @@ namespace ICP_REPORT_SERVICE
                             ep.SaveAs(fi);
                         }
                     }
+
+                    //Simple MonthlyReport
+                    DateTime temp = currentTime.AddMonths(-1);
+                    temp = new DateTime(temp.Year, temp.Month, 1);
+                    if (!File.Exists($"{ _options.Value.ReportDirectory}\\Report\\Excel\\Monthly\\{temp.Month}月簡明月報.xlsx"))
+                    {
+                        File.Copy(@"Template/Simple_MonthlyReportTemplate.xlsx",
+                            $"{ _options.Value.ReportDirectory}\\Report\\Excel\\Monthly\\{temp.Month}月簡明月報.xlsx");
+                    }
+                    using (ExcelPackage ep = new ExcelPackage(new FileInfo($"{ _options.Value.ReportDirectory}\\Report\\Excel\\Monthly\\{temp.Month}月簡明月報.xlsx")))
+                    {
+                        using (var connection = new MySqlConnection($"Server={_options.Value.MySQL_IpAddress};User ID={_options.Value.MySQL_User};Password={_options.Value.MySQL_Password};Database={_options.Value.MySQL_DbTable}"))
+                        {
+                            connection.Open();
+                            var ws = ep.Workbook.Worksheets.SingleOrDefault(x => x.Name == "辰亞電力");
+                            // Init for WorkSheets
+                            DateTime temp_UTC = temp.AddHours(-8);
+                            double Last_Value = 0, First_Value = 0;
+                            for (int DayOfMonth = 0; DayOfMonth < DateTime.DaysInMonth(temp.Year, temp.Month); DayOfMonth++)
+                            {
+                                ws.Cells[2, 3 + DayOfMonth].Value = temp.AddDays(DayOfMonth).ToString(@"MM/dd");
+
+                                //單日發電量
+                                using (var command = new MySqlCommand($"select value, eventTime from analogevents where points_idPoint=1064 and eventTime " +
+                                                $"between '{temp_UTC.AddDays(DayOfMonth).ToString("yyyy-MM-dd 16:00:00")}' and '{temp_UTC.AddDays(DayOfMonth + 1).ToString("yyyy-MM-dd 15:59:59")}' order by eventTime desc limit 1", connection))
+                                {
+                                    command.CommandTimeout = 6000;
+                                    using (var reader = command.ExecuteReader())
+                                        while (reader.Read())
+                                        {
+                                            Last_Value = reader.GetDouble(0);
+                                        }
+                                }
+                                using (var command = new MySqlCommand($"select value, eventTime from analogevents where points_idPoint=1064 and eventTime " +
+                                    $"between '{temp_UTC.AddDays(DayOfMonth).ToString("yyyy-MM-dd 16:00:00")}' and '{temp_UTC.AddDays(DayOfMonth + 1).ToString("yyyy-MM-dd 15:59:59")}' order by eventTime asc limit 1", connection))
+                                {
+                                    command.CommandTimeout = 6000;
+                                    using (var reader = command.ExecuteReader())
+                                        while (reader.Read())
+                                        {
+                                            First_Value = reader.GetDouble(0);
+                                        }
+                                }
+
+                                ws.Cells[3, 3 + DayOfMonth].Value = Last_Value - First_Value;
+                                Last_Value = 0; First_Value = 0;
+                                //單日耗電量
+                                using (var command = new MySqlCommand($"select value, eventTime from analogevents where points_idPoint=1066 and eventTime " +
+                                                $"between '{temp_UTC.AddDays(DayOfMonth).ToString("yyyy-MM-dd 16:00:00")}' and '{temp_UTC.AddDays(DayOfMonth + 1).ToString("yyyy-MM-dd 15:59:59")}' order by eventTime desc limit 1", connection))
+                                {
+                                    command.CommandTimeout = 6000;
+                                    using (var reader = command.ExecuteReader())
+                                        while (reader.Read())
+                                        {
+                                            Last_Value = reader.GetDouble(0);
+                                        }
+                                }
+                                using (var command = new MySqlCommand($"select value, eventTime from analogevents where points_idPoint=1066 and eventTime " +
+                                    $"between '{temp_UTC.AddDays(DayOfMonth).ToString("yyyy-MM-dd 16:00:00")}' and '{temp_UTC.AddDays(DayOfMonth + 1).ToString("yyyy-MM-dd 15:59:59")}' order by eventTime asc limit 1", connection))
+                                {
+                                    command.CommandTimeout = 6000;
+                                    using (var reader = command.ExecuteReader())
+                                        while (reader.Read())
+                                        {
+                                            First_Value = reader.GetDouble(0);
+                                        }
+                                }
+
+                                ws.Cells[4, 3 + DayOfMonth].Value = Last_Value - First_Value;
+                                Last_Value = 0; First_Value = 0;
+
+                                //所內耗電量
+                                using (var command = new MySqlCommand($"select value, eventTime from analogevents where points_idPoint=1022 and eventTime " +
+                                                $"between '{temp_UTC.AddDays(DayOfMonth).ToString("yyyy-MM-dd 16:00:00")}' and '{temp_UTC.AddDays(DayOfMonth + 1).ToString("yyyy-MM-dd 15:59:59")}' order by eventTime desc limit 1", connection))
+                                {
+                                    command.CommandTimeout = 6000;
+                                    using (var reader = command.ExecuteReader())
+                                        while (reader.Read())
+                                        {
+                                            Last_Value = reader.GetDouble(0);
+                                        }
+                                }
+                                using (var command = new MySqlCommand($"select value, eventTime from analogevents where points_idPoint=1022 and eventTime " +
+                                    $"between '{temp_UTC.AddDays(DayOfMonth).ToString("yyyy-MM-dd 16:00:00")}' and '{temp_UTC.AddDays(DayOfMonth + 1).ToString("yyyy-MM-dd 15:59:59")}' order by eventTime asc limit 1", connection))
+                                {
+                                    command.CommandTimeout = 6000;
+                                    using (var reader = command.ExecuteReader())
+                                        while (reader.Read())
+                                        {
+                                            First_Value = reader.GetDouble(0);
+                                        }
+                                }
+
+                                ws.Cells[5, 3 + DayOfMonth].Value = Last_Value - First_Value;
+
+                                bool startFlag = false;
+                                double last_value = 0;
+                                DateTime startTime = new DateTime(2000, 1, 1, 0, 0, 0), endTime = new DateTime(2000, 1, 1, 0, 0, 0);
+                                for (int i = 0; i < 1442; i++)
+                                {
+                                    using (var command = new MySqlCommand($"select value, eventTime from analogevents where points_idPoint=1064 and eventTime between '{temp_UTC.AddDays(DayOfMonth).AddMinutes(i).ToString("yyyy-MM-dd HH:mm:00")}' and '{temp_UTC.AddDays(DayOfMonth).AddMinutes(i + 1).ToString("yyyy-MM-dd HH:mm:00")}' order by eventTime desc limit 1", connection))
+                                    {
+                                        command.CommandTimeout = 6000;
+                                        using (var reader = command.ExecuteReader())
+                                            while (reader.Read())
+                                            {
+                                                if (i == 0)
+                                                {
+                                                    last_value = reader.GetDouble(0);
+                                                    break;
+                                                }
+                                                if (last_value == reader.GetDouble(0) && !startFlag)
+                                                {
+                                                    break;
+                                                }
+                                                if (last_value == reader.GetDouble(0) && startFlag)
+                                                {
+                                                    endTime = reader.GetDateTime(1);
+                                                    break;
+                                                }
+                                                if (!startFlag)
+                                                {
+                                                    startTime = reader.GetDateTime(1);
+                                                    startFlag = true;
+                                                }
+                                            }
+                                    }
+                                }
+                                ws.Cells[6, 3 + DayOfMonth].Value = startTime.ToString("HH:mm");
+                                ws.Cells[7, 3 + DayOfMonth].Value = endTime.ToString("HH:mm");
+                                ws.Cells[8, 3 + DayOfMonth].Value = $"{endTime.Subtract(startTime).Hours}:{endTime.Subtract(startTime).Minutes}";
+                            }
+                            ep.Save();
+                        }
+                    }
+                    using (ExcelPackage ep = new ExcelPackage(new FileInfo($"{ _options.Value.ReportDirectory}\\Report\\Excel\\Monthly\\{temp.Month}月簡明月報.xlsx")))
+                    {
+                        using (var connection = new MySqlConnection($"Server={_options.Value.MySQL_IpAddress};User ID={_options.Value.MySQL_User};Password={_options.Value.MySQL_Password};Database={_options.Value.MySQL_DbTable}"))
+                        {
+                            connection.Open();
+                            var ws = ep.Workbook.Worksheets.SingleOrDefault(x => x.Name == "厚固光電");
+                            // Init for WorkSheets
+                            DateTime temp_UTC = temp.AddHours(-8);
+                            double Last_Value = 0, First_Value = 0;
+                            for (int DayOfMonth = 0; DayOfMonth < DateTime.DaysInMonth(temp.Year, temp.Month); DayOfMonth++)
+                            {
+                                ws.Cells[2, 3 + DayOfMonth].Value = temp.AddDays(DayOfMonth).ToString(@"MM/dd");
+
+                                //單日發電量
+                                using (var command = new MySqlCommand($"select value, eventTime from analogevents where points_idPoint=1068 and eventTime " +
+                                                $"between '{temp_UTC.AddDays(DayOfMonth).ToString("yyyy-MM-dd 16:00:00")}' and '{temp_UTC.AddDays(DayOfMonth + 1).ToString("yyyy-MM-dd 15:59:59")}' order by eventTime desc limit 1", connection))
+                                {
+                                    command.CommandTimeout = 6000;
+                                    using (var reader = command.ExecuteReader())
+                                        while (reader.Read())
+                                        {
+                                            Last_Value = reader.GetDouble(0);
+                                        }
+                                }
+                                using (var command = new MySqlCommand($"select value, eventTime from analogevents where points_idPoint=1068 and eventTime " +
+                                    $"between '{temp_UTC.AddDays(DayOfMonth).ToString("yyyy-MM-dd 16:00:00")}' and '{temp_UTC.AddDays(DayOfMonth + 1).ToString("yyyy-MM-dd 15:59:59")}' order by eventTime asc limit 1", connection))
+                                {
+                                    command.CommandTimeout = 6000;
+                                    using (var reader = command.ExecuteReader())
+                                        while (reader.Read())
+                                        {
+                                            First_Value = reader.GetDouble(0);
+                                        }
+                                }
+
+                                ws.Cells[3, 3 + DayOfMonth].Value = Last_Value - First_Value;
+                                Last_Value = 0; First_Value = 0;
+
+                                //單日耗電量
+                                using (var command = new MySqlCommand($"select value, eventTime from analogevents where points_idPoint=1070 and eventTime " +
+                                                $"between '{temp_UTC.AddDays(DayOfMonth).ToString("yyyy-MM-dd 16:00:00")}' and '{temp_UTC.AddDays(DayOfMonth + 1).ToString("yyyy-MM-dd 15:59:59")}' order by eventTime desc limit 1", connection))
+                                {
+                                    command.CommandTimeout = 6000;
+                                    using (var reader = command.ExecuteReader())
+                                        while (reader.Read())
+                                        {
+                                            Last_Value = reader.GetDouble(0);
+                                        }
+                                }
+                                using (var command = new MySqlCommand($"select value, eventTime from analogevents where points_idPoint=1070 and eventTime " +
+                                    $"between '{temp_UTC.AddDays(DayOfMonth).ToString("yyyy-MM-dd 16:00:00")}' and '{temp_UTC.AddDays(DayOfMonth + 1).ToString("yyyy-MM-dd 15:59:59")}' order by eventTime asc limit 1", connection))
+                                {
+                                    command.CommandTimeout = 6000;
+                                    using (var reader = command.ExecuteReader())
+                                        while (reader.Read())
+                                        {
+                                            First_Value = reader.GetDouble(0);
+                                        }
+                                }
+
+                                ws.Cells[4, 3 + DayOfMonth].Value = Last_Value - First_Value;
+                                Last_Value = 0; First_Value = 0;
+
+                                //所內耗電量
+                                using (var command = new MySqlCommand($"select value, eventTime from analogevents where points_idPoint=1022 and eventTime " +
+                                                $"between '{temp_UTC.AddDays(DayOfMonth).ToString("yyyy-MM-dd 16:00:00")}' and '{temp_UTC.AddDays(DayOfMonth + 1).ToString("yyyy-MM-dd 15:59:59")}' order by eventTime desc limit 1", connection))
+                                {
+                                    command.CommandTimeout = 6000;
+                                    using (var reader = command.ExecuteReader())
+                                        while (reader.Read())
+                                        {
+                                            Last_Value = reader.GetDouble(0);
+                                        }
+                                }
+                                using (var command = new MySqlCommand($"select value, eventTime from analogevents where points_idPoint=1022 and eventTime " +
+                                    $"between '{temp_UTC.AddDays(DayOfMonth).ToString("yyyy-MM-dd 16:00:00")}' and '{temp_UTC.AddDays(DayOfMonth + 1).ToString("yyyy-MM-dd 15:59:59")}' order by eventTime asc limit 1", connection))
+                                {
+                                    command.CommandTimeout = 6000;
+                                    using (var reader = command.ExecuteReader())
+                                        while (reader.Read())
+                                        {
+                                            First_Value = reader.GetDouble(0);
+                                        }
+                                }
+
+                                ws.Cells[5, 3 + DayOfMonth].Value = Last_Value - First_Value;
+
+                                bool startFlag = false;
+                                double last_value = 0;
+                                DateTime startTime = new DateTime(2000, 1, 1, 0, 0, 0), endTime = new DateTime(2000, 1, 1, 0, 0, 0);
+                                for (int i = 0; i < 1442; i++)
+                                {
+                                    using (var command = new MySqlCommand($"select value, eventTime from analogevents where points_idPoint=1068 and eventTime between '{temp_UTC.AddDays(DayOfMonth).AddMinutes(i).ToString("yyyy-MM-dd HH:mm:00")}' and '{temp_UTC.AddDays(DayOfMonth).AddMinutes(i + 1).ToString("yyyy-MM-dd HH:mm:00")}' order by eventTime desc limit 1", connection))
+                                    {
+                                        command.CommandTimeout = 6000;
+                                        using (var reader = command.ExecuteReader())
+                                            while (reader.Read())
+                                            {
+                                                if (i == 0)
+                                                {
+                                                    last_value = reader.GetDouble(0);
+                                                    break;
+                                                }
+                                                if (last_value == reader.GetDouble(0) && !startFlag)
+                                                {
+                                                    break;
+                                                }
+                                                if (last_value == reader.GetDouble(0) && startFlag)
+                                                {
+                                                    endTime = reader.GetDateTime(1);
+                                                    break;
+                                                }
+                                                if (!startFlag)
+                                                {
+                                                    startTime = reader.GetDateTime(1);
+                                                    startFlag = true;
+                                                }
+                                            }
+                                    }
+                                }
+                                ws.Cells[6, 3 + DayOfMonth].Value = startTime.ToString("HH:mm");
+                                ws.Cells[7, 3 + DayOfMonth].Value = endTime.ToString("HH:mm");
+                                ws.Cells[8, 3 + DayOfMonth].Value = $"{endTime.Subtract(startTime).Hours}:{endTime.Subtract(startTime).Minutes}";
+                            }
+                            ep.Save();
+                        }
+                    }
                 }
                 //Archive Service
-                if(oldState_Archive == false && raiseFlag_Archive == true && Archive_Is_Finished == true)
+                if(oldState_Archive == false && raiseFlag_Archive == true && Archive_Is_Finished == true && ReportOnly == false)
                 {
                     Archive_Is_Finished = false;
                     _logger.LogInformation("--- Archive Service Start ---");
@@ -452,8 +940,16 @@ namespace ICP_REPORT_SERVICE
                             InsertMsgToDbTable("EXPORT DATA START", $"DATE: {QueryDate.AddDays(AddDay).ToString("yyyy-MM-dd")} exporting data, from ID: {ScanIndex_Start} to {ScanIndex_End}.");
                             try
                             {
+                                string ori_path = $"{_options.Value.BackupDirectory}\\{QueryDate.AddDays(AddDay).ToString("yyyy-MM-dd")}_Rawdata";
+                                string path = ori_path;
+                                int file_count = 0;
+                                while (File.Exists($"{path}.zip"))
+                                {
+                                    path = $"{ori_path}_{file_count}";
+                                    file_count++;
+                                }
                                 //Compress and save SQL file to *.zip
-                                using (FileStream zipToOpen = new FileStream($"{_options.Value.BackupDirectory}\\{QueryDate.AddDays(AddDay).ToString("yyyy-MM-dd")}_Rawdata.zip", FileMode.Create))
+                                using (FileStream zipToOpen = new FileStream($"{path}.zip", FileMode.Create))
                                 {
                                     using (ZipArchive archive = new ZipArchive(zipToOpen, ZipArchiveMode.Update))
                                     {
@@ -478,6 +974,28 @@ namespace ICP_REPORT_SERVICE
                                     }
                                 }
 
+                                TodayHaveRawdata = false;
+                                _logger.LogInformation($"SaveFile: \"{path}.zip\"");
+                                _logger.LogInformation($"DATE {QueryDate.AddDays(AddDay).ToString("yyyy-MM-dd")} archive completed.");
+                                InsertMsgToDbTable("EXPORT DATA END", $"DATE: {path}.zip export completed and saving file.");
+
+                                FileInfo fileinfo = new FileInfo($"{path}.zip");
+                                if (fileinfo.Length < 10000)
+                                {
+                                    break;
+                                }
+
+                                //Remove rawdata from database
+                                _logger.LogInformation($"Remove \"{QueryDate.AddDays(AddDay).ToString("yyyy-MM-dd")}\" rawdata from database.");
+                                InsertMsgToDbTable("REMOVE DATA START", $"DATE: {QueryDate.AddDays(AddDay).ToString("yyyy-MM-dd")} removing old data.");
+                                using (var command = new MySqlCommand($"delete from analogevents where eventTime < '{QueryDate.AddDays(AddDay).ToString("yyyy-MM-dd 16:00:00")}' and eventTime > '{QueryDate.AddDays(AddDay - 1).ToString("yyyy-MM-dd 15:59:59")}' order by eventTime", connection))
+                                {
+                                    command.CommandTimeout = 604800;
+                                    command.ExecuteNonQuery();
+                                }
+                                _logger.LogInformation($"Remove completed.");
+                                InsertMsgToDbTable("REMOVE DATA END", $"DATE: {QueryDate.AddDays(AddDay).ToString("yyyy-MM-dd")} remove completed.");
+
                             }
                             catch (Exception e)
                             {
@@ -485,34 +1003,8 @@ namespace ICP_REPORT_SERVICE
                                 InsertMsgToDbTable("ERROR OCCURED WHEN EXPORTING", $"DATE: {QueryDate.AddDays(AddDay).ToString("yyyy-MM-dd")} export failed.");
                                 continue;
                             }
-                            TodayHaveRawdata = false;
-                            _logger.LogInformation($"SaveFile: \"{QueryDate.AddDays(AddDay).ToString("yyyy-MM-dd")}_Rawdata.zip\"");
-                            _logger.LogInformation($"DATE {QueryDate.AddDays(AddDay).ToString("yyyy-MM-dd")} archive completed.");
-                            InsertMsgToDbTable("EXPORT DATA END", $"DATE: {QueryDate.AddDays(AddDay).ToString("yyyy-MM-dd")}.zip export completed and saving file.");
-
-                            //Remove rawdata from database
-                            _logger.LogInformation($"Remove \"{QueryDate.AddDays(AddDay).ToString("yyyy-MM-dd")}\" rawdata from database.");
-                            InsertMsgToDbTable("REMOVE DATA START", $"DATE: {QueryDate.AddDays(AddDay).ToString("yyyy-MM-dd")} removing old data.");
-                            using (var command = new MySqlCommand($"delete from analogevents where eventTime < '{QueryDate.AddDays(AddDay).ToString("yyyy-MM-dd 16:00:00")}' and eventTime > '{QueryDate.AddDays(AddDay-1).ToString("yyyy-MM-dd 15:59:59")}' order by eventTime", connection))
-                            {
-                                command.CommandTimeout = 604800;
-                                command.ExecuteNonQuery();
-                            }
-                            _logger.LogInformation($"Remove completed.");
-                            InsertMsgToDbTable("REMOVE DATA END", $"DATE: {QueryDate.AddDays(AddDay).ToString("yyyy-MM-dd")} remove completed.");
-
                             AddDay--;
                         }
-                        //Remove rawdata from database
-                        /*_logger.LogInformation($"Remove \"{QueryDate.ToString("yyyy-MM-dd")}\" rawdata from database.");
-                        InsertMsgToDbTable("REMOVE DATA START", $"DATE: {QueryDate.ToString("yyyy-MM-dd")} removing old data.");
-                        using (var command = new MySqlCommand($"delete from analogevents where eventTime < '{QueryDate.ToString("yyyy-MM-dd 16:00:00")} and eventTime > '{QueryDate.ToString("yyyy-MM-dd 15:59:59")}' order by eventTime", connection))
-                        {
-                            command.CommandTimeout = 604800;
-                            command.ExecuteNonQuery();
-                        }
-                        _logger.LogInformation($"Remove completed.");
-                        InsertMsgToDbTable("REMOVE DATA END", $"DATE: {QueryDate.AddDays(AddDay).ToString("yyyy-MM-dd")} remove completed.");*/
                     }
                     Archive_Is_Finished = true;
                 }
