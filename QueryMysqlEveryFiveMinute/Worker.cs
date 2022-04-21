@@ -42,7 +42,7 @@ namespace ICP_REPORT_SERVICE
         private bool ReportOnly = true;
 
         // If Debugmode, output file will add debug text.
-        private bool DebugMode = true;
+        private bool DebugMode = false;
         private string DebugStr;
         public Worker(ILogger<Worker> logger, IOptions<ServiceOptions> options)
         {
@@ -356,7 +356,7 @@ namespace ICP_REPORT_SERVICE
                                     {
                                         double Last_Value = 0, First_Value = 0;
                                         using (var command = new MySqlCommand($"select value from analogevents where points_idPoint=1064 and eventTime " +
-                                            $"between '{temp_UTC.AddHours(HourOfDay).ToString("yyyy-MM-dd HH:00")}' and '{temp_UTC.AddHours(HourOfDay + 1).ToString("yyyy-MM-dd HH:00")}' order by eventTime desc limit 1", connection))
+                                            $"between '{temp_UTC.AddDays(DayOfMonth).AddHours(HourOfDay).ToString("yyyy-MM-dd HH:00")}' and '{temp_UTC.AddDays(DayOfMonth).AddHours(HourOfDay + 1).ToString("yyyy-MM-dd HH:00")}' order by eventTime desc limit 1", connection))
                                         {
                                             command.CommandTimeout = 6000;
                                             using (var reader = command.ExecuteReader())
@@ -377,6 +377,8 @@ namespace ICP_REPORT_SERVICE
                                         }
 
                                         ws.Cells[7 + DayOfMonth + row_format + (HourOfDay / 12), 14 + (HourOfDay % 12)].Value = Last_Value - First_Value;
+
+                                        _logger.LogInformation($"{temp_UTC.AddDays(DayOfMonth).AddHours(HourOfDay).ToString("yyyy-MM-dd HH:00")} - LV: {Last_Value}, FV: {First_Value}, Diff: {Last_Value - First_Value}");
                                     }
                                     row_format++;
                                 }
@@ -437,7 +439,7 @@ namespace ICP_REPORT_SERVICE
                                     {
                                         double Last_Value = 0, First_Value = 0;
                                         using (var command = new MySqlCommand($"select value from analogevents where points_idPoint=1068 and eventTime " +
-                                            $"between '{temp_UTC.AddHours(HourOfDay).ToString("yyyy-MM-dd HH:00")}' and '{temp_UTC.AddHours(HourOfDay + 1).ToString("yyyy-MM-dd HH:00")}' order by eventTime desc limit 1", connection))
+                                            $"between '{temp_UTC.AddDays(DayOfMonth).AddHours(HourOfDay).ToString("yyyy-MM-dd HH:00")}' and '{temp_UTC.AddDays(DayOfMonth).AddHours(HourOfDay + 1).ToString("yyyy-MM-dd HH:00")}' order by eventTime desc limit 1", connection))
                                         {
                                             command.CommandTimeout = 6000;
                                             using (var reader = command.ExecuteReader())

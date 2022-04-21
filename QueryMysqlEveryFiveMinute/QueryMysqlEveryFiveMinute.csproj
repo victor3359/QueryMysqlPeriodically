@@ -22,5 +22,17 @@
     <PackageReference Include="MySqlConnector" Version="1.3.11" />
   </ItemGroup>
 
+  <ItemGroup>
+    <None Update="Template\CHENYA_TaipowerMonthlyTemplate.xlsx">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
+    <None Update="Template\HOLDGOOD_TaipowerMonthlyTemplate.xlsx">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
+    <None Update="Template\Simple_MonthlyReportTemplate.xlsx">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
   <ProjectExtensions><VisualStudio><UserProperties appsettings_1json__JsonSchema="" /></VisualStudio></ProjectExtensions>
 </Project>
